@@ -1,0 +1,19 @@
+<svg width="160" height="160" viewBox="0 0 160 160" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="160" height="160" rx="24" fill="#4A90E2"/>
+  
+  <!-- Cursor icon (click symbol) -->
+  <path d="M100 40L70 70L100 100" stroke="white" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  
+  <!-- Document with text lines -->
+  <rect x="40" y="40" width="80" height="80" rx="8" fill="white" opacity="0.9"/>
+  
+  <!-- Text lines -->
+  <path d="M56 64H88" stroke="#4A90E2" stroke-width="4" stroke-linecap="round"/>
+  <path d="M56 80H104" stroke="#4A90E2" stroke-width="4" stroke-linecap="round"/>
+  <path d="M56 96H96" stroke="#4A90E2" stroke-width="4" stroke-linecap="round"/>
+  
+  <!-- Plus sign for fill action -->
+  <path d="M112 64V96" stroke="white" stroke-width="6" stroke-linecap="round"/>
+  <path d="M100 80H124" stroke="white" stroke-width="6" stroke-linecap="round"/>
+</svg>

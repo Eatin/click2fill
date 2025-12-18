@@ -1,4 +1,4 @@
-.plugin-sample {
+.plugin-click2fill {
   &__custom-tab {
     background-color: var(--b3-theme-background);
     height: 100%;
@@ -18,5 +18,78 @@
     background: var(--b3-card-info-background);
     border-radius: 4px;
     padding: 2px 8px;
+  }
+
+  &__config {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+
+  &__config-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--b3-border-color);
+  }
+
+  &__menu-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+  }
+
+  &__menu-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    margin-bottom: 8px;
+    background-color: var(--b3-card-background);
+    border-radius: 4px;
+    border: 1px solid var(--b3-border-color);
+  }
+
+  &__menu-info {
+    flex: 1;
+  }
+
+  &__menu-name {
+    font-weight: bold;
+    margin-bottom: 4px;
+  }
+
+  &__menu-url {
+    font-size: 12px;
+    color: var(--b3-text-color-tertiary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__menu-actions {
+    display: flex;
+    gap: 8px;
+  }
+
+  &__empty {
+    text-align: center;
+    padding: 24px;
+    color: var(--b3-text-color-tertiary);
+  }
+
+  &__menu-edit {
+    padding: 16px;
+  }
+
+  &__form-item {
+    margin-bottom: 16px;
+  }
+
+  &__form-item label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: bold;
   }
 }
