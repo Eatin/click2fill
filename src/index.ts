@@ -291,9 +291,12 @@ export default class PluginSample extends Plugin {
         if (menu.template) {
             try {
                 // Simple template rendering using ${key} syntax
-                return menu.template.replace(/\$\{(\w+)\}/g, (match, key) => {
+                let rendered = menu.template.replace(/\$\{(\w+)\}/g, (match, key) => {
                     return data[key] !== undefined ? data[key] : match;
                 });
+                // Replace escaped newlines with actual newlines
+                rendered = rendered.replace(/\\n/g, "\n");
+                return rendered;
             } catch (error) {
                 // Template rendering failed, fall back to default formatting
             }
@@ -326,6 +329,17 @@ export default class PluginSample extends Plugin {
         range.collapse(false);
         selection.removeAllRanges();
         selection.addRange(range);
+        
+        // Trigger input event to ensure Markdown rendering
+        const activeElement = document.activeElement;
+        if (activeElement) {
+            const inputEvent = new InputEvent('input', {
+                bubbles: true,
+                cancelable: true,
+                composed: true
+            });
+            activeElement.dispatchEvent(inputEvent);
+        }
     }
     
     private openConfigurePanel() {
