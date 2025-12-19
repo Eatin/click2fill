@@ -28,5 +28,9 @@
   "editMenu": "Edit Menu",
   "deleteMenu": "Delete Menu",
   "confirmDeleteMenu": "Confirm to delete this menu?",
-  "noMenusConfigured": "No menus configured, please configure first"
+  "noMenusConfigured": "No menus configured, please configure first",
+  "keyword": "Keyword",
+  "regex": "Regular Expression",
+  "keywordPlaceholder": "Separate multiple keywords with commas",
+  "regexPlaceholder": "JavaScript regular expression pattern"
 }

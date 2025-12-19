@@ -28,5 +28,9 @@
   "editMenu": "编辑菜单",
   "deleteMenu": "删除菜单",
   "confirmDeleteMenu": "确认删除此菜单？",
-  "noMenusConfigured": "暂无菜单配置，请先配置菜单"
+  "noMenusConfigured": "暂无菜单配置，请先配置菜单",
+  "keyword": "关键字",
+  "regex": "正则表达式",
+  "keywordPlaceholder": "多个关键字用逗号分隔",
+  "regexPlaceholder": "JavaScript 正则表达式模式"
 }

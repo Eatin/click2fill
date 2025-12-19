@@ -21,6 +21,8 @@ interface MenuConfig {
     params: Record<string, string>;
     responseType: string;
     template: string;
+    keyword?: string;
+    regex?: string;
 }
 
 interface PluginConfig {
@@ -171,6 +173,34 @@ export default class PluginSample extends Plugin {
     //     console.log("onDataChanged");
     // }
 
+    private isMenuMatch(menuConfig: MenuConfig, selectedText: string): boolean {
+        // If neither keyword nor regex is configured, it's a match
+        if (!menuConfig.keyword && !menuConfig.regex) {
+            return true;
+        }
+        
+        // Check regex first if configured
+        if (menuConfig.regex) {
+            try {
+                const regex = new RegExp(menuConfig.regex);
+                return regex.test(selectedText);
+            } catch (error) {
+                // Invalid regex, fallback to keyword matching
+            }
+        }
+        
+        // Check keyword if configured
+        if (menuConfig.keyword) {
+            const keywords = menuConfig.keyword.split("，").concat(menuConfig.keyword.split(","));
+            return keywords.some(keyword => {
+                const trimmedKeyword = keyword.trim();
+                return trimmedKeyword && selectedText.includes(trimmedKeyword);
+            });
+        }
+        
+        return true;
+    }
+    
     private showDynamicMenu(protyle: Protyle, selectedText: string) {
         // Ensure config is loaded
         if (!this.config || !Array.isArray(this.config.menus)) {
@@ -182,10 +212,15 @@ export default class PluginSample extends Plugin {
 
         });
         
+        // Filter menus based on selected text
+        const matchedMenus = this.config.menus.filter(menuConfig => {
+            return this.isMenuMatch(menuConfig, selectedText);
+        });
+        
         // Add dynamic menu items from config
-        if (this.config && this.config.menus && this.config.menus.length > 0) {
+        if (matchedMenus.length > 0) {
 
-            this.config.menus.forEach(menuConfig => {
+            matchedMenus.forEach(menuConfig => {
 
                 menu.addItem({
                     id: menuConfig.id,
@@ -412,6 +447,14 @@ export default class PluginSample extends Plugin {
                         <textarea id="plugin-click2fill__menu-params" class="b3-text-field fn__block" rows="3">${menu?.params ? JSON.stringify(menu.params, null, 2) : "{}"}</textarea>
                     </div>
                     <div class="plugin-click2fill__form-item">
+                        <label>${this.i18n.keyword}</label>
+                        <input type="text" id="plugin-click2fill__menu-keyword" class="b3-text-field" value="${menu?.keyword || ""}" placeholder="${this.i18n.keywordPlaceholder}">
+                    </div>
+                    <div class="plugin-click2fill__form-item">
+                        <label>${this.i18n.regex}</label>
+                        <input type="text" id="plugin-click2fill__menu-regex" class="b3-text-field" value="${menu?.regex || ""}" placeholder="${this.i18n.regexPlaceholder}">
+                    </div>
+                    <div class="plugin-click2fill__form-item">
                         <label>${this.i18n.menuTemplate}</label>
                         <textarea id="plugin-click2fill__menu-template" class="b3-text-field fn__block" rows="3">${menu?.template || ""}</textarea>
                     </div>
@@ -423,7 +466,7 @@ export default class PluginSample extends Plugin {
                 </div>
             `,
             width: 500,
-            height: 500
+            height: 600
         });
         
         // Bind event handlers after dialog is opened
@@ -453,6 +496,8 @@ export default class PluginSample extends Plugin {
         const method = document.getElementById("plugin-click2fill__menu-method") as HTMLSelectElement;
         const headers = document.getElementById("plugin-click2fill__menu-headers") as HTMLTextAreaElement;
         const params = document.getElementById("plugin-click2fill__menu-params") as HTMLTextAreaElement;
+        const keyword = document.getElementById("plugin-click2fill__menu-keyword") as HTMLInputElement;
+        const regex = document.getElementById("plugin-click2fill__menu-regex") as HTMLInputElement;
         const template = document.getElementById("plugin-click2fill__menu-template") as HTMLTextAreaElement;
         
         // Validate required fields
@@ -489,7 +534,9 @@ export default class PluginSample extends Plugin {
             headers: headersData,
             params: paramsData,
             responseType: "json",
-            template: template.value.trim()
+            template: template.value.trim(),
+            keyword: keyword.value.trim(),
+            regex: regex.value.trim()
         };
         
         if (menuId) {
