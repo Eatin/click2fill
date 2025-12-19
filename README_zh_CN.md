@@ -1,4 +1,4 @@
-[English](README.md)
+[English](https://github.com/Eatin/click2fill/blob/main/README.md)
 
 # Click2Fill
 
@@ -131,7 +131,7 @@ click2fill/
 
 ## 更新日志
 
-请参阅 [CHANGELOG.md](CHANGELOG.md) 了解版本历史。
+请参阅 [CHANGELOG.md](https://github.com/Eatin/click2fill/blob/main/CHANGELOG.md) 了解版本历史。
 
 ## 许可证
 

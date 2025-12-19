@@ -1,4 +1,4 @@
-[中文](README_zh_CN.md)
+[中文](https://github.com/Eatin/click2fill/blob/main/README_zh_CN.md)
 
 # Click2Fill
 
@@ -131,7 +131,7 @@ Temperature: 22°C, Conditions: Sunny
 
 ## Changelog
 
-See [CHANGELOG.md](CHANGELOG.md) for version history.
+See [CHANGELOG.md](https://github.com/Eatin/click2fill/blob/main/CHANGELOG.md) for version history.
 
 ## License
 
