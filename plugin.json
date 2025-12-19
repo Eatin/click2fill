@@ -2,7 +2,7 @@
   "name": "click2fill",
   "author": "Eatin",
   "url": "https://github.com/Eatin/click2fill",
-  "version": "0.1.0",
+  "version": "0.4.3",
   "minAppVersion": "3.1.3",
   "backends": ["all"],
   "frontends": ["all"],
@@ -18,14 +18,6 @@
   "readme": {
     "default": "README.md",
     "zh_CN": "README_zh_CN.md"
-  },
-  "funding": {
-    "openCollective": "",
-    "patreon": "",
-    "github": "",
-    "custom": [
-      "https://ld246.com/sponsor"
-    ]
   },
   "keywords": [
     "text-fill",
