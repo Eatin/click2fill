@@ -335,9 +335,14 @@ export default class PluginSample extends Plugin {
                 <div class="plugin-click2fill__config">
                     <div class="plugin-click2fill__config-header">
                         <h3>${this.i18n.click2fill} ${this.i18n.configure}</h3>
-                        <button id="plugin-click2fill__add-menu" class="b3-button b3-button--outline b3-button--small">
-                            ${this.i18n.addMenu}
-                        </button>
+                        <div class="plugin-click2fill__config-buttons">
+                            <button id="plugin-click2fill__export-menu" class="b3-button b3-button--outline b3-button--small">
+                                导出菜单
+                            </button>
+                            <button id="plugin-click2fill__add-menu" class="b3-button b3-button--outline b3-button--small">
+                                ${this.i18n.addMenu}
+                            </button>
+                        </div>
                     </div>
                     <div id="plugin-click2fill__menu-list" class="plugin-click2fill__menu-list">
                         ${this.renderMenuList()}
@@ -380,6 +385,12 @@ export default class PluginSample extends Plugin {
     }
     
     private bindConfigPanelEvents(dialogElement: HTMLElement) {
+        // Export menu button
+        const exportMenuButton = dialogElement.querySelector("#plugin-click2fill__export-menu") as HTMLElement;
+        exportMenuButton.addEventListener("click", () => {
+            this.exportMenus();
+        });
+        
         // Add menu button
         const addMenuButton = dialogElement.querySelector("#plugin-click2fill__add-menu") as HTMLElement;
         addMenuButton.addEventListener("click", () => {
@@ -413,6 +424,40 @@ export default class PluginSample extends Plugin {
                 }
             });
         });
+    }
+    
+    private exportMenus() {
+        // Create export data
+        const exportData = {
+            version: "1.0.0",
+            exportTime: new Date().toISOString(),
+            menus: this.config.menus
+        };
+        
+        // Convert to JSON string
+        const jsonString = JSON.stringify(exportData, null, 2);
+        
+        // Create a blob with the JSON string
+        const blob = new Blob([jsonString], { type: "application/json" });
+        
+        // Create a download link
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `click2fill-menus-${new Date().toISOString().slice(0, 10)}.json`;
+        
+        // Trigger download
+        document.body.appendChild(a);
+        a.click();
+        
+        // Clean up
+        setTimeout(() => {
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }, 100);
+        
+        // Show success message
+        showMessage("菜单配置已成功导出");
     }
     
     private openMenuEditDialog(menu: MenuConfig | null) {
