@@ -161,8 +161,8 @@ export default class PluginSample extends Plugin {
 
     }
 
-    uninstall() {
-
+    async uninstall() {
+        await this.removeData(STORAGE_NAME);
     }
 
     // 使用 saveData() 存储的数据发生变更时触发，注释掉则自动禁用插件再重新启用
