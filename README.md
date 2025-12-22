@@ -11,6 +11,7 @@ Click2Fill is a powerful plugin for SiYuan that allows you to select text, send 
 * **Text Selection**: Select any text in your document
 * **API Integration**: Send selected text to custom API endpoints
 * **Dynamic Menus**: Configure multiple API endpoints with custom names and icons
+* **Smart Menu Display**: Only shows relevant menus based on selected text, solving the problem of too many configurations being displayed
 * **Keyboard Shortcut**: Quick access using `⇧⌘I` (Shift+Command+I)
 * **Append Content**: Results are added after selected text, not replacing it
 * **URL Validation**: Automatic protocol prefix addition for URLs
