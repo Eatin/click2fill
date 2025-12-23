@@ -16,6 +16,13 @@ Click2Fill is a powerful plugin for SiYuan that allows you to select text, send 
 * **Append Content**: Results are added after selected text, not replacing it
 * **URL Validation**: Automatic protocol prefix addition for URLs
 * **Custom Templates**: Format API responses using simple templates
+* **Menu Display Methods**: Choose to always display, or only show based on keyword/regex matching
+* **Advanced Settings Panel**: Headers and params configuration in collapsible advanced section
+* **API Request Result Rendering**: Customize how API responses are formatted
+* **Default Template Values**: Pre-configured templates for quick setup
+* **Placeholder Support**: Use `${selectText}` in request parameters to include selected text
+* **Default Request Method**: POST method set as default for better compatibility
+* **Simplified Request Methods**: Only GET and POST options for easier configuration
 
 ## Installation
 
