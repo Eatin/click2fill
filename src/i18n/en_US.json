@@ -23,14 +23,19 @@
   "menuHeaders": "Request Headers",
   "menuParams": "Request Parameters",
   "menuResponseType": "Response Type",
-  "menuTemplate": "Insert Template",
+  "menuTemplate": "API Request Result Rendering",
   "addMenu": "Add Menu",
   "editMenu": "Edit Menu",
   "deleteMenu": "Delete Menu",
   "confirmDeleteMenu": "Confirm to delete this menu?",
-  "noMenusConfigured": "No menus configured, please configure first",
+  "noMenusConfigured": "No menus configured, please click 'Add Request'"
   "keyword": "Keyword",
   "regex": "Regular Expression",
   "keywordPlaceholder": "Separate multiple keywords with commas",
-  "regexPlaceholder": "JavaScript regular expression pattern"
+  "regexPlaceholder": "JavaScript regular expression pattern",
+  "displayMethod": "When to Display Menu",
+  "alwaysDisplay": "Always Display",
+  "displayByKeyword": "Display by Keyword Match",
+  "displayByRegex": "Display by Regex Match",
+  "displayMethodHint": ""
 }

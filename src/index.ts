@@ -1,13 +1,4 @@
-import {
-    Plugin,
-    showMessage,
-    confirm,
-    Dialog,
-    Menu,
-    Protyle
-} from "siyuan";
-import "./index.scss";
-
+import { Plugin, showMessage, confirm, Dialog, Menu, Proactwrite } from "siyuan";
 
 const STORAGE_NAME = "click2fill-config";
 
@@ -35,9 +26,8 @@ export default class PluginSample extends Plugin {
     private config: PluginConfig;
 
     onload() {
-        // 图标的制作参见帮助文档
         this.addIcons(`<symbol id="iconFace" viewBox="0 0 32 32">
-<path d="M13.667 17.333c0 0.92-0.747 1.667-1.667 1.667s-1.667-0.747-1.667-1.667 0.747-1.667 1.667-1.667 1.667 0.747 1.667 1.667zM20 15.667c-0.92 0-1.667 0.747-1.667 1.667s0.747 1.667 1.667 1.667 1.667-0.747 1.667-1.667-0.747-1.667-1.667-1.667zM29.333 16c0 7.36-5.973 13.333-13.333 13.333s-13.333-5.973-13.333-13.333 5.973-13.333 13.333-13.333 13.333 5.973 13.333 13.333zM14.213 5.493c1.867 3.093 5.253 5.173 9.12 5.173 0.613 0 1.213-0.067 1.787-0.16-1.867-3.093-5.253-5.173-9.12-5.173-0.613 0-1.213 0.067-1.787 0.16zM5.893 12.627c2.28-1.293 4.040-3.4 4.88-5.92-2.28 1.293-4.040 3.4-4.88 5.92zM26.667 16c0-1.040-0.16-2.040-0.44-2.987-0.933 0.2-1.893 0.32-2.893 0.32-4.173 0-7.893-1.92-10.347-4.92-1.4 3.413-4.187 6.093-7.653 7.4 0.013 0.053 0 0.12 0 0.187 0 5.88 4.787 10.667 10.667 10.667s10.667-4.787 10.667-10.667z"></path>
+<path d="M13.667 17.333c0 0.92-0.747 1.667-1.667 1.667s-1.667-0.747-1.667-1.667 0.747-1.667 1.667-1.667 1.667 0.747 1.667 1.667zM20 15.667c-0.92 0-1.667 0.747-1.667 1.667s0.747 1.667 1.667 1.667 1.667-0.6 1.667-1.333c0-0.733-0.6-1.333-1.333-1.333s-1.333 0.6-1.333 1.333zM14.213 5.493c1.867 3.093 5.253 5.173 9.12 5.173 0.613 0 1.213-0.067 1.787-0.16-1.867-3.093-5.253-5.173-9.12-5.173-0.613 0-1.213 0.067-1.787 0.16zM5.893 12.627c2.28-1.293 4.04-3.4 4.88-5.92-2.28 1.293-4.04 3.4-4.88 5.92zM26.667 16c0-1.040-0.16-2.040-0.44-2.987-0.933 0.2-1.893 0.32-2.893 0.32-4.173 0-7.893-1.92-10.347-4.92-1.4 3.413-4.187 6.093-7.653 7.4 0.013 0.053 0 0.12 0 0.187 0 5.88 4.787 10.667 10.667 10.667s10.667-4.787 10.667-10.667z"></path>
 </symbol>
 <symbol id="iconSaving" viewBox="0 0 32 32">
 <path d="M20 13.333c0-0.733 0.6-1.333 1.333-1.333s1.333 0.6 1.333 1.333c0 0.733-0.6 1.333-1.333 1.333s-1.333-0.6-1.333-1.333zM10.667 12h6.667v-2.667h-6.667v2.667zM29.333 10v9.293l-3.76 1.253-2.24 7.453h-7.333v-2.667h-2.667v2.667h-7.333c0 0-3.333-11.28-3.333-15.333s3.28-7.333 7.333-7.333h6.667c1.213-1.613 3.147-2.667 5.333-2.667 1.107 0 2 0.893 2 2 0 0.28-0.053 0.533-0.16 0.773-0.187 0.453-0.347 0.973-0.427 1.533l3.027 3.027h2.893zM26.667 12.667h-1.333l-4.667-4.667c0-0.867 0.12-1.72 0.347-2.547-1.293 0.333-2.347 1.293-2.787 2.547h-8.227c-2.573 0-4.667 2.093-4.667 4.667 0 2.507 1.627 8.867 2.68 12.667h2.653v-2.667h8v2.667h2.68l2.067-6.867 3.253-1.093v-4.707z"></path>
@@ -53,11 +43,10 @@ export default class PluginSample extends Plugin {
 <path d="M22 17H26" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
 </symbol>`);
 
-        // Add shortcut for opening dynamic menu
         this.addCommand({
             langKey: "openMenu",
             hotkey: "⇧⌘I",
-            callback: (protyle: Protyle) => {
+            callback: (protyle: Proactwrite) => {
                 const selectedText = window.getSelection().toString().trim();
                 if (!selectedText) {
                     showMessage(this.i18n.selectTextFirst);
@@ -66,37 +55,53 @@ export default class PluginSample extends Plugin {
                 this.showDynamicMenu(protyle, selectedText);
             },
         });
-
-
     }
     
     private loadConfig() {
-        // Get configuration from storage or initialize default config
         const storedConfig = this.data[STORAGE_NAME] || {};
         this.config = {
             menus: Array.isArray(storedConfig.menus) ? storedConfig.menus : [],
             defaultMenu: storedConfig.defaultMenu || ""
         };
-
     }
     
     private saveConfig() {
-        // Save configuration to storage
         this.saveData(STORAGE_NAME, this.config);
     }
     
     private async sendRequest(menu: MenuConfig, selectedText: string): Promise<any> {
-        // Prepare request data
         const requestData: any = {
             text: selectedText
         };
         
-        // Add custom params to request data
         if (menu.params) {
-            Object.assign(requestData, menu.params);
+            // 创建params的深拷贝，避免修改原始配置
+            const paramsCopy = JSON.parse(JSON.stringify(menu.params));
+            
+            // 递归替换所有${selectText}占位符为实际选中的文本
+            const replaceSelectText = (obj: any): any => {
+                if (typeof obj === 'string') {
+                    return obj.replace(/\$\{selectText\}/g, selectedText);
+                } else if (typeof obj === 'object' && obj !== null) {
+                    if (Array.isArray(obj)) {
+                        return obj.map(item => replaceSelectText(item));
+                    } else {
+                        const result: any = {};
+                        for (const key in obj) {
+                            if (obj.hasOwnProperty(key)) {
+                                result[key] = replaceSelectText(obj[key]);
+                            }
+                        }
+                        return result;
+                    }
+                }
+                return obj;
+            };
+            
+            const processedParams = replaceSelectText(paramsCopy);
+            Object.assign(requestData, processedParams);
         }
         
-        // Prepare request options
         const options: any = {
             method: menu.method || "GET",
             headers: {
@@ -105,17 +110,14 @@ export default class PluginSample extends Plugin {
             }
         };
         
-        // Ensure URL has protocol prefix
         let url = menu.url;
         if (!/^https?:\/\//i.test(url)) {
             url = `http://${url}`;
         }
             
-        // Add request body if method is not GET
         if (options.method !== "GET" && options.method !== "HEAD") {
             options.body = JSON.stringify(requestData);
         } else {
-            // Add params to URL for GET requests
             const requestUrl = new URL(url);
             Object.entries(requestData).forEach(([key, value]) => {
                 requestUrl.searchParams.append(key, value.toString());
@@ -123,14 +125,12 @@ export default class PluginSample extends Plugin {
             url = requestUrl.toString();
         }
             
-        // Send request
         const response = await fetch(url, options);
         
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status} - ${response.statusText}`);
         }
         
-        // Parse response based on response type
         let data;
         switch (menu.responseType || "json") {
             case "json":
@@ -153,10 +153,7 @@ export default class PluginSample extends Plugin {
     }
 
     onLayoutReady() {
-        this.loadData(STORAGE_NAME).then(() => {
-            // Update config after loading data
-            this.loadConfig();
-        });
+        this.loadConfig();
     }
 
     onunload() {
@@ -167,19 +164,11 @@ export default class PluginSample extends Plugin {
         await this.removeData(STORAGE_NAME);
     }
 
-    // 使用 saveData() 存储的数据发生变更时触发，注释掉则自动禁用插件再重新启用
-    // Triggered when data stored using saveData() changes. If commented out, the plugin will be automatically disabled and then re-enabled.
-    // onDataChanged() {
-    //     console.log("onDataChanged");
-    // }
-
     private isMenuMatch(menuConfig: MenuConfig, selectedText: string): boolean {
-        // If neither keyword nor regex is configured, it's a match
         if (!menuConfig.keyword && !menuConfig.regex) {
             return true;
         }
         
-        // Check regex first if configured
         if (menuConfig.regex) {
             try {
                 const regex = new RegExp(menuConfig.regex);
@@ -189,9 +178,8 @@ export default class PluginSample extends Plugin {
             }
         }
         
-        // Check keyword if configured
         if (menuConfig.keyword) {
-            const keywords = menuConfig.keyword.split("，").concat(menuConfig.keyword.split(","));
+            const keywords = menuConfig.keyword.split(/[,，]/);
             return keywords.some(keyword => {
                 const trimmedKeyword = keyword.trim();
                 return trimmedKeyword && selectedText.includes(trimmedKeyword);
@@ -201,25 +189,20 @@ export default class PluginSample extends Plugin {
         return true;
     }
     
-    private showDynamicMenu(protyle: Protyle, selectedText: string) {
-        // Ensure config is loaded
+    private showDynamicMenu(protyle: Proactwrite, selectedText: string) {
         if (!this.config || !Array.isArray(this.config.menus)) {
             this.loadConfig();
         }
         
-        // Create menu with correct API
         const menu = new Menu("click2fill", () => {
 
         });
         
-        // Filter menus based on selected text
         const matchedMenus = this.config.menus.filter(menuConfig => {
             return this.isMenuMatch(menuConfig, selectedText);
         });
         
-        // Add dynamic menu items from config
         if (matchedMenus.length > 0) {
-
             matchedMenus.forEach(menuConfig => {
 
                 menu.addItem({
@@ -227,28 +210,23 @@ export default class PluginSample extends Plugin {
                     iconHTML: `<svg class="b3-menu__icon"><use xlink:href="#${menuConfig.icon}"></use></svg>`,
                     label: menuConfig.name,
                     click: () => {
-                        // Handle menu click
                         this.handleMenuClick(protyle, selectedText, menuConfig);
                     }
                 });
             });
             
-            // Add separator
             menu.addItem({type: "separator"});
         }
         
-        // Add configure menu item
         menu.addItem({
             id: "configure",
             iconHTML: "<svg class=\"b3-menu__icon\"><use xlink:href=\"#iconSettings\"></use></svg>",
             label: this.i18n.configure,
             click: () => {
-                // Open configuration panel
                 this.openConfigurePanel();
             }
         });
         
-        // Get cursor position instead of mouse position
         let x = window.innerWidth / 2;
         let y = window.innerHeight / 2;
         
@@ -261,25 +239,17 @@ export default class PluginSample extends Plugin {
                 y = rect.bottom;
             }
         } catch (error) {
-            // Ignore errors when getting cursor position, fall back to default
+            // Ignore selection range errors
         }
         
-        // Show menu with correct API
         menu.open({x: x, y: y});
     }
     
-    private async handleMenuClick(protyle: Protyle, selectedText: string, menu: MenuConfig) {
+    private async handleMenuClick(protyle: Proactwrite, selectedText: string, menu: MenuConfig) {
         try {
-            // Send API request
             const data = await this.sendRequest(menu, selectedText);
-            
-            // Prepare content to insert
             const content = this.formatResponse(data, menu);
-            
-            // Insert content into document
             this.insertContent(protyle, content);
-            
-            // Show success message
             showMessage(this.i18n.contentInserted);
         } catch (error) {
             showMessage(this.i18n.requestFailed);
@@ -287,22 +257,21 @@ export default class PluginSample extends Plugin {
     }
     
     private formatResponse(data: any, menu: MenuConfig): string {
-        // Use template if provided
         if (menu.template) {
             try {
-                // Simple template rendering using ${key} syntax
                 let rendered = menu.template.replace(/\$\{(\w+)\}/g, (match, key) => {
+                    if (key === "data") {
+                        return typeof data === "object" ? JSON.stringify(data, null, 2) : String(data);
+                    }
                     return data[key] !== undefined ? data[key] : match;
                 });
-                // Replace escaped newlines with actual newlines
                 rendered = rendered.replace(/\\n/g, "\n");
                 return rendered;
             } catch (error) {
-                // Template rendering failed, fall back to default formatting
+                // Template rendering failed, fallback to default formatting
             }
         }
         
-        // Default formatting based on response type
         if (typeof data === "object") {
             return JSON.stringify(data, null, 2);
         } else {
@@ -310,30 +279,22 @@ export default class PluginSample extends Plugin {
         }
     }
     
-    private insertContent(protyle: Protyle, content: string) {
-        // Get selection range
+    private insertContent(protyle: Proactwrite, content: string) {
         const selection = window.getSelection();
         if (!selection || selection.rangeCount === 0) {
             return;
         }
         
         const range = selection.getRangeAt(0);
-        
-        // Move cursor to the end of selected text
         range.collapse(false);
-        
-        // Insert new content after selected text
         range.insertNode(document.createTextNode(content));
-        
-        // Move cursor to end of inserted content
         range.collapse(false);
         selection.removeAllRanges();
         selection.addRange(range);
         
-        // Trigger input event to ensure Markdown rendering
         const activeElement = document.activeElement;
         if (activeElement) {
-            const inputEvent = new InputEvent('input', {
+            const inputEvent = new InputEvent("input", {
                 bubbles: true,
                 cancelable: true,
                 composed: true
@@ -350,11 +311,14 @@ export default class PluginSample extends Plugin {
                     <div class="plugin-click2fill__config-header">
                         <h3>${this.i18n.click2fill} ${this.i18n.configure}</h3>
                         <div class="plugin-click2fill__config-buttons">
-                            <button id="plugin-click2fill__export-menu" class="b3-button b3-button--outline b3-button--small">
-                                导出菜单
+                            <button id="plugin-click2fill__import-menu" class="b3-button b3-button--outline b3-button--small" style="margin-right: 8px;">
+                                导入
+                            </button>
+                            <button id="plugin-click2fill__export-menu" class="b3-button b3-button--outline b3-button--small" style="margin-right: 8px;">
+                                导出
                             </button>
                             <button id="plugin-click2fill__add-menu" class="b3-button b3-button--outline b3-button--small">
-                                ${this.i18n.addMenu}
+                                新增请求
                             </button>
                         </div>
                     </div>
@@ -363,13 +327,12 @@ export default class PluginSample extends Plugin {
                     </div>
                 </div>
             `,
-            width: 600,
+            width: 700,
             height: 500,
             destroyCallback: () => {
             }
         });
         
-        // Bind events after dialog is opened
         setTimeout(() => {
             this.bindConfigPanelEvents(dialog.element);
         }, 0);
@@ -399,19 +362,23 @@ export default class PluginSample extends Plugin {
     }
     
     private bindConfigPanelEvents(dialogElement: HTMLElement) {
-        // Export menu button
+        const importMenuButton = dialogElement.querySelector("#plugin-click2fill__import-menu") as HTMLElement;
+        if (importMenuButton) {
+            importMenuButton.addEventListener("click", () => {
+                this.importMenus();
+            });
+        }
+        
         const exportMenuButton = dialogElement.querySelector("#plugin-click2fill__export-menu") as HTMLElement;
         exportMenuButton.addEventListener("click", () => {
             this.exportMenus();
         });
         
-        // Add menu button
         const addMenuButton = dialogElement.querySelector("#plugin-click2fill__add-menu") as HTMLElement;
         addMenuButton.addEventListener("click", () => {
             this.openMenuEditDialog(null);
         });
         
-        // Edit menu buttons
         dialogElement.querySelectorAll(".plugin-click2fill__edit-menu").forEach(button => {
             button.addEventListener("click", (e) => {
                 const menuElement = (e.target as HTMLElement).closest(".plugin-click2fill__menu-item");
@@ -425,7 +392,6 @@ export default class PluginSample extends Plugin {
             });
         });
         
-        // Delete menu buttons
         dialogElement.querySelectorAll(".plugin-click2fill__delete-menu").forEach(button => {
             button.addEventListener("click", (e) => {
                 const menuElement = (e.target as HTMLElement).closest(".plugin-click2fill__menu-item");
@@ -441,37 +407,77 @@ export default class PluginSample extends Plugin {
     }
     
     private exportMenus() {
-        // Create export data
         const exportData = {
             version: "1.0.0",
             exportTime: new Date().toISOString(),
             menus: this.config.menus
         };
         
-        // Convert to JSON string
         const jsonString = JSON.stringify(exportData, null, 2);
-        
-        // Create a blob with the JSON string
         const blob = new Blob([jsonString], { type: "application/json" });
         
-        // Create a download link
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
         a.download = `click2fill-menus-${new Date().toISOString().slice(0, 10)}.json`;
         
-        // Trigger download
         document.body.appendChild(a);
         a.click();
         
-        // Clean up
         setTimeout(() => {
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
         }, 100);
         
-        // Show success message
         showMessage("菜单配置已成功导出");
+    }
+    
+    private importMenus() {
+        // Create a file input element
+        const input = document.createElement("input");
+        input.type = "file";
+        input.accept = ".json";
+        
+        // Handle file selection
+        input.onchange = (e: Event) => {
+            const target = e.target as HTMLInputElement;
+            const file = target.files?.[0];
+            if (file) {
+                const reader = new FileReader();
+                
+                reader.onload = (event) => {
+                    try {
+                        const content = event.target?.result as string;
+                        const importData = JSON.parse(content);
+                        
+                        // Validate imported data
+                        if (importData.menus && Array.isArray(importData.menus)) {
+                            // Import menus
+                            this.config.menus = importData.menus;
+                            this.saveConfig();
+                            
+                            // Update menu list
+                            const menuListElement = document.getElementById("plugin-click2fill__menu-list");
+                            if (menuListElement) {
+                                menuListElement.innerHTML = this.renderMenuList();
+                                this.bindConfigPanelEvents(menuListElement.closest(".plugin-click2fill__config") as HTMLElement);
+                            }
+                            
+                            showMessage("菜单配置已成功导入");
+                        } else {
+                            showMessage("导入失败：无效的菜单配置文件");
+                        }
+                    } catch (error) {
+                        showMessage("导入失败：JSON解析错误");
+                    }
+                };
+                
+                reader.readAsText(file);
+            }
+        };
+        
+        // Trigger file selection dialog
+        input.click();
     }
     
     private openMenuEditDialog(menu: MenuConfig | null) {
@@ -480,43 +486,55 @@ export default class PluginSample extends Plugin {
             title: isEdit ? this.i18n.editMenu : this.i18n.addMenu,
             content: `
                 <div class="plugin-click2fill__menu-edit">
-                    <div class="plugin-click2fill__form-item">
-                        <label>${this.i18n.menuName}</label>
-                        <input type="text" id="plugin-click2fill__menu-name" class="b3-text-field" value="${menu?.name || ""}">
+                    <div class="plugin-click2fill__form-item" style="display: block; width: 100%; margin-bottom: 20px;">
+                        <label style="display: block; margin-bottom: 8px;">${this.i18n.menuName}</label>
+                        <input type="text" id="plugin-click2fill__menu-name" class="b3-text-field" style="display: block; width: 100%;" value="${menu?.name || ""}">
                     </div>
-                    <div class="plugin-click2fill__form-item">
-                        <label>${this.i18n.menuUrl}</label>
-                        <input type="text" id="plugin-click2fill__menu-url" class="b3-text-field" value="${menu?.url || ""}">
+                    <div class="plugin-click2fill__form-item" style="display: block; width: 100%; margin-bottom: 20px;">
+                        <label style="display: block; margin-bottom: 8px;">${this.i18n.menuUrl}</label>
+                        <input type="text" id="plugin-click2fill__menu-url" class="b3-text-field" style="display: block; width: 100%;" value="${menu?.url || ""}">
                     </div>
                     <div class="plugin-click2fill__form-item">
                         <label>${this.i18n.menuMethod}</label>
                         <select id="plugin-click2fill__menu-method" class="b3-select">
                             <option value="GET" ${menu?.method === "GET" ? "selected" : ""}>GET</option>
-                            <option value="POST" ${menu?.method === "POST" ? "selected" : ""}>POST</option>
-                            <option value="PUT" ${menu?.method === "PUT" ? "selected" : ""}>PUT</option>
-                            <option value="DELETE" ${menu?.method === "DELETE" ? "selected" : ""}>DELETE</option>
+                            <option value="POST" ${menu?.method === "GET" ? "" : "selected"}>POST</option>
                         </select>
                     </div>
                     <div class="plugin-click2fill__form-item">
-                        <label>${this.i18n.menuHeaders}</label>
-                        <textarea id="plugin-click2fill__menu-headers" class="b3-text-field fn__block" rows="3">${menu?.headers ? JSON.stringify(menu.headers, null, 2) : "{}"}</textarea>
+                        <label>${this.i18n.menuTemplate}</label>
+                        <textarea id="plugin-click2fill__menu-template" class="b3-text-field fn__block" rows="3">${menu?.template || "${data}"}</textarea>
                     </div>
                     <div class="plugin-click2fill__form-item">
-                        <label>${this.i18n.menuParams}</label>
-                        <textarea id="plugin-click2fill__menu-params" class="b3-text-field fn__block" rows="3">${menu?.params ? JSON.stringify(menu.params, null, 2) : "{}"}</textarea>
+                        <label>${this.i18n.displayMethod}</label>
+                        <select id="plugin-click2fill__display-method" class="b3-select">
+                            <option value="always" ${(!menu?.keyword && !menu?.regex) ? "selected" : ""}>${this.i18n.alwaysDisplay}</option>
+                            <option value="keyword" ${(menu?.keyword && !menu?.regex) ? "selected" : ""}>${this.i18n.displayByKeyword}</option>
+                            <option value="regex" ${menu?.regex ? "selected" : ""}>${this.i18n.displayByRegex}</option>
+                        </select>
+                        <div class="plugin-click2fill__form-hint">${this.i18n.displayMethodHint}</div>
                     </div>
-                    <div class="plugin-click2fill__form-item">
+                    <div class="plugin-click2fill__form-item" id="plugin-click2fill__keyword-section" style="display: ${(menu?.keyword && !menu?.regex) ? "block" : "none"};">
                         <label>${this.i18n.keyword}</label>
                         <input type="text" id="plugin-click2fill__menu-keyword" class="b3-text-field" value="${menu?.keyword || ""}" placeholder="${this.i18n.keywordPlaceholder}">
                     </div>
-                    <div class="plugin-click2fill__form-item">
+                    <div class="plugin-click2fill__form-item" id="plugin-click2fill__regex-section" style="display: ${menu?.regex ? "block" : "none"};">
                         <label>${this.i18n.regex}</label>
                         <input type="text" id="plugin-click2fill__menu-regex" class="b3-text-field" value="${menu?.regex || ""}" placeholder="${this.i18n.regexPlaceholder}">
                     </div>
-                    <div class="plugin-click2fill__form-item">
-                        <label>${this.i18n.menuTemplate}</label>
-                        <textarea id="plugin-click2fill__menu-template" class="b3-text-field fn__block" rows="3">${menu?.template || ""}</textarea>
-                    </div>
+                    <details class="plugin-click2fill__advanced-section">
+                        <summary class="plugin-click2fill__advanced-toggle">高级设置</summary>
+                        <div class="plugin-click2fill__advanced-content">
+                            <div class="plugin-click2fill__form-item">
+                                <label>${this.i18n.menuHeaders}</label>
+                                <textarea id="plugin-click2fill__menu-headers" class="b3-text-field fn__block" rows="3">${menu?.headers ? JSON.stringify(menu.headers, null, 2) : "{}"}</textarea>
+                            </div>
+                            <div class="plugin-click2fill__form-item">
+                                <label>${this.i18n.menuParams}</label>
+                                <textarea id="plugin-click2fill__menu-params" class="b3-text-field fn__block" rows="3">${menu?.params ? JSON.stringify(menu.params, null, 2) : '{"text": "${selectText}"}'}</textarea>
+                            </div>
+                        </div>
+                    </details>
                     <div class="b3-dialog__action">
                         <button class="b3-button b3-button--cancel" id="plugin-click2fill__cancel">${this.i18n.cancel}</button>
                         <div class="fn__space"></div>
@@ -525,13 +543,17 @@ export default class PluginSample extends Plugin {
                 </div>
             `,
             width: 500,
-            height: 600
+            height: 650
         });
         
-        // Bind event handlers after dialog is opened
         setTimeout(() => {
             const cancelBtn = dialog.element.querySelector("#plugin-click2fill__cancel");
             const saveBtn = dialog.element.querySelector("#plugin-click2fill__save");
+            const displayMethodSelect = dialog.element.querySelector("#plugin-click2fill__display-method");
+            const keywordSection = dialog.element.querySelector("#plugin-click2fill__keyword-section");
+            const regexSection = dialog.element.querySelector("#plugin-click2fill__regex-section");
+            const keywordInput = dialog.element.querySelector("#plugin-click2fill__menu-keyword");
+            const regexInput = dialog.element.querySelector("#plugin-click2fill__menu-regex");
             
             if (cancelBtn) {
                 cancelBtn.addEventListener("click", () => {
@@ -545,11 +567,33 @@ export default class PluginSample extends Plugin {
                     dialog.destroy();
                 });
             }
+            
+            // Add event listener for display method change
+            if (displayMethodSelect && keywordSection && regexSection && keywordInput && regexInput) {
+                displayMethodSelect.addEventListener("change", (e) => {
+                    const selectedValue = (e.target as HTMLSelectElement).value;
+                    
+                    // Reset inputs
+                    keywordInput.value = "";
+                    regexInput.value = "";
+                    
+                    // Show/hide sections based on selected value
+                    if (selectedValue === "always") {
+                        keywordSection.style.display = "none";
+                        regexSection.style.display = "none";
+                    } else if (selectedValue === "keyword") {
+                        keywordSection.style.display = "block";
+                        regexSection.style.display = "none";
+                    } else if (selectedValue === "regex") {
+                        keywordSection.style.display = "none";
+                        regexSection.style.display = "block";
+                    }
+                });
+            }
         }, 0);
     }
     
     private saveMenu(menuId: string | null) {
-        // Get form values
         const name = document.getElementById("plugin-click2fill__menu-name") as HTMLInputElement;
         const url = document.getElementById("plugin-click2fill__menu-url") as HTMLInputElement;
         const method = document.getElementById("plugin-click2fill__menu-method") as HTMLSelectElement;
@@ -559,13 +603,11 @@ export default class PluginSample extends Plugin {
         const regex = document.getElementById("plugin-click2fill__menu-regex") as HTMLInputElement;
         const template = document.getElementById("plugin-click2fill__menu-template") as HTMLTextAreaElement;
         
-        // Validate required fields
         if (!name.value.trim() || !url.value.trim()) {
             showMessage("请填写必填字段");
             return;
         }
         
-        // Parse JSON fields
         let headersData: Record<string, string> = {};
         let paramsData: Record<string, string> = {};
         
@@ -577,8 +619,6 @@ export default class PluginSample extends Plugin {
             return;
         }
         
-        // Create or update menu
-        // Ensure URL has protocol prefix when saving
         let menuUrl = url.value.trim();
         if (!/^https?:\/\//i.test(menuUrl)) {
             menuUrl = `http://${menuUrl}`;
@@ -587,7 +627,7 @@ export default class PluginSample extends Plugin {
         const menu: MenuConfig = {
             id: menuId || this.generateMenuId(),
             name: name.value.trim(),
-            icon: "iconLink", // Default icon
+            icon: "iconLink",
             url: menuUrl,
             method: method.value,
             headers: headersData,
@@ -599,27 +639,22 @@ export default class PluginSample extends Plugin {
         };
         
         if (menuId) {
-            // Update existing menu
             const index = this.config.menus.findIndex(m => m.id === menuId);
             if (index !== -1) {
                 this.config.menus[index] = menu;
             }
         } else {
-            // Add new menu
             this.config.menus.push(menu);
         }
         
-        // Save config
         this.saveConfig();
         
-        // Update menu list in config panel
         const menuListElement = document.getElementById("plugin-click2fill__menu-list");
         if (menuListElement) {
             menuListElement.innerHTML = this.renderMenuList();
             this.bindConfigPanelEvents(menuListElement.closest(".plugin-click2fill__config") as HTMLElement);
         }
         
-        // Show success message
         showMessage(this.i18n.configSaved);
     }
     
@@ -628,14 +663,12 @@ export default class PluginSample extends Plugin {
             this.config.menus = this.config.menus.filter(m => m.id !== menu.id);
             this.saveConfig();
             
-            // Update menu list
             const menuListElement = document.getElementById("plugin-click2fill__menu-list");
             if (menuListElement) {
                 menuListElement.innerHTML = this.renderMenuList();
                 this.bindConfigPanelEvents(menuListElement.closest(".plugin-click2fill__config") as HTMLElement);
             }
             
-            // Show success message
             showMessage(this.i18n.configSaved);
         });
     }
@@ -643,8 +676,6 @@ export default class PluginSample extends Plugin {
     private generateMenuId(): string {
         return "menu-" + Date.now() + "-" + Math.floor(Math.random() * 1000);
     }
-    
-
 
     /* 自定义设置
     openSetting() {

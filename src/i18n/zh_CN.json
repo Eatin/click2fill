@@ -23,14 +23,19 @@
   "menuHeaders": "请求头",
   "menuParams": "请求参数",
   "menuResponseType": "响应类型",
-  "menuTemplate": "插入模板",
+  "menuTemplate": "API请求结果渲染",
   "addMenu": "添加菜单",
   "editMenu": "编辑菜单",
   "deleteMenu": "删除菜单",
   "confirmDeleteMenu": "确认删除此菜单？",
-  "noMenusConfigured": "暂无菜单配置，请先配置菜单",
+  "noMenusConfigured": "无菜单配置，请先点击‘新增请求’",
   "keyword": "关键字",
   "regex": "正则表达式",
   "keywordPlaceholder": "多个关键字用逗号分隔",
-  "regexPlaceholder": "JavaScript 正则表达式模式"
+  "regexPlaceholder": "JavaScript 正则表达式模式",
+  "displayMethod": "菜单何时显示",
+  "alwaysDisplay": "总是显示",
+  "displayByKeyword": "匹配关键字显示",
+  "displayByRegex": "匹配正则表达式显示",
+  "displayMethodHint": ""
 }
