@@ -287,7 +287,16 @@ export default class PluginSample extends Plugin {
         
         const range = selection.getRangeAt(0);
         range.collapse(false);
-        range.insertNode(document.createTextNode(content));
+        
+        // 创建临时元素来解析HTML内容
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = content;
+        
+        // 逐个插入子节点
+        while (tempDiv.firstChild) {
+            range.insertNode(tempDiv.firstChild);
+        }
+        
         range.collapse(false);
         selection.removeAllRanges();
         selection.addRange(range);
