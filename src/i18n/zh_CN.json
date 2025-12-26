@@ -37,5 +37,11 @@
   "alwaysDisplay": "总是显示",
   "displayByKeyword": "匹配关键字显示",
   "displayByRegex": "匹配正则表达式显示",
-  "displayMethodHint": ""
+  "displayMethodHint": "",
+  "insertionMethod": "结果渲染方式",
+  "insertToCurrentDocument": "插入到当前文档",
+  "insertToSubdocument": "插入到子文档",
+  "confirm": "确认",
+  "subdocumentCreated": "配套知识子文档已创建",
+  "contentInsertedToSubdoc": "内容已插入到配套知识子文档"
 }

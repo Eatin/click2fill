@@ -14,11 +14,21 @@ interface MenuConfig {
     template: string;
     keyword?: string;
     regex?: string;
+    insertionMethod: string;
+}
+
+interface KnowledgeItem {
+    id: string;
+    keyword: string;
+    content: string;
+    menuId: string;
+    createdAt: number;
 }
 
 interface PluginConfig {
     menus: MenuConfig[];
     defaultMenu: string;
+    knowledge: KnowledgeItem[];
 }
 
 export default class PluginSample extends Plugin {
@@ -66,16 +76,24 @@ export default class PluginSample extends Plugin {
         // 如果 storedConfig 本身是数组，说明是旧版本的数据结构
         if (Array.isArray(storedConfig)) {
             this.config = {
-                menus: storedConfig,
-                defaultMenu: ""
+                menus: storedConfig.map(menu => ({
+                    ...menu,
+                    insertionMethod: menu.insertionMethod || "current"
+                })),
+                defaultMenu: "",
+                knowledge: []
             };
             // 转换后保存新格式
             await this.saveConfig();
         } else {
-            // 新的数据结构，有 menus 和 defaultMenu 属性
+            // 新的数据结构，有 menus, defaultMenu 和 knowledge 属性
             this.config = {
-                menus: Array.isArray(storedConfig.menus) ? storedConfig.menus : [],
-                defaultMenu: storedConfig.defaultMenu || ""
+                menus: Array.isArray(storedConfig.menus) ? storedConfig.menus.map(menu => ({
+                    ...menu,
+                    insertionMethod: menu.insertionMethod || "current"
+                })) : [],
+                defaultMenu: storedConfig.defaultMenu || "",
+                knowledge: Array.isArray(storedConfig.knowledge) ? storedConfig.knowledge : []
             };
         }
     }
@@ -85,7 +103,8 @@ export default class PluginSample extends Plugin {
         if (!this.config) {
             this.config = {
                 menus: [],
-                defaultMenu: ""
+                defaultMenu: "",
+                knowledge: []
             };
         }
         
@@ -93,8 +112,42 @@ export default class PluginSample extends Plugin {
             this.config.menus = [];
         }
         
+        if (!Array.isArray(this.config.knowledge)) {
+            this.config.knowledge = [];
+        }
+        
         // saveData 是异步方法，需要使用 await
         await this.saveData(STORAGE_NAME, this.config);
+    }
+    
+    private addKnowledgeToConfig(keyword: string, content: string, menuId: string) {
+        // Check if knowledge already exists for this keyword
+        const existingIndex = this.config.knowledge.findIndex(item => 
+            item.keyword.toLowerCase() === keyword.toLowerCase() && item.menuId === menuId
+        );
+        
+        const knowledgeItem: KnowledgeItem = {
+            id: `knowledge-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+            keyword,
+            content,
+            menuId,
+            createdAt: Date.now()
+        };
+        
+        if (existingIndex >= 0) {
+            // Update existing knowledge
+            this.config.knowledge[existingIndex] = knowledgeItem;
+        } else {
+            // Add new knowledge
+            this.config.knowledge.push(knowledgeItem);
+        }
+        
+        // Save the updated config
+        this.saveConfig().catch(error => {
+            console.error("Failed to save knowledge to config:", error);
+        });
+        
+        console.log("Added knowledge to config:", knowledgeItem);
     }
     
     private async sendRequest(menu: MenuConfig, selectedText: string): Promise<any> {
@@ -108,9 +161,9 @@ export default class PluginSample extends Plugin {
             
             // 递归替换所有${selectText}占位符为实际选中的文本
             const replaceSelectText = (obj: any): any => {
-                if (typeof obj === 'string') {
+                if (typeof obj === "string") {
                     return obj.replace(/\$\{selectText\}/g, selectedText);
-                } else if (typeof obj === 'object' && obj !== null) {
+                } else if (typeof obj === "object" && obj !== null) {
                     if (Array.isArray(obj)) {
                         return obj.map(item => replaceSelectText(item));
                     } else {
@@ -223,6 +276,150 @@ export default class PluginSample extends Plugin {
             await this.loadConfig();
         }
         
+        // Get document ID when menu is created (before context is lost)
+        let docId;
+        
+        // Method 1: From protyle object (if available)
+        if (protyle) {
+            console.log("Method 1: Getting docId from protyle object");
+            // Try to get document ID from different properties
+            if (protyle.block?.rootID) {
+                docId = protyle.block.rootID;
+            } else if (protyle.rootID) {
+                docId = protyle.rootID;
+            } else if (protyle.block?.id) {
+                docId = protyle.block.id;
+            } else if (protyle.id) {
+                docId = protyle.id;
+            }
+        }
+        
+        // Method 2: From active editor element
+        if (!docId) {
+            console.log("Method 2: Getting docId from active editor");
+            const activeEditor = document.querySelector(".protyle-wysiwyg");
+            console.log("Active editor element:", activeEditor);
+            if (activeEditor) {
+                // Log all attributes of activeEditor
+                console.log("Active editor attributes:", activeEditor.attributes);
+                // Check all possible attributes for document ID
+                const possibleAttributes = ["data-node-id", "data-root-id", "data-block-id", "id"];
+                for (const attr of possibleAttributes) {
+                    const value = activeEditor.getAttribute(attr);
+                    if (value) {
+                        console.log(`Found ID in ${attr}: ${value}`);
+                        docId = value;
+                        break;
+                    }
+                }
+            }
+        }
+        
+        // Method 3: From URL hash
+        if (!docId) {
+            console.log("Method 3: Getting docId from URL hash");
+            const hash = window.location.hash;
+            console.log("URL hash:", hash);
+            if (hash) {
+                // Try different URL patterns
+                const patterns = [
+                    /^#\/([a-f0-9]{20})$/i, // Original pattern
+                    /^#\/([a-z0-9-]{22})$/i, // Pattern with hyphen
+                    /id=([a-f0-9]{20})/i,    // Query parameter pattern
+                    /node=([a-f0-9]{20})/i   // Another query parameter pattern
+                ];
+                for (const pattern of patterns) {
+                    const match = hash.match(pattern);
+                    if (match && match[1]) {
+                        console.log(`Found ID from URL pattern ${pattern}: ${match[1]}`);
+                        docId = match[1];
+                        break;
+                    }
+                }
+            }
+        }
+        
+        // Method 4: From active tab
+        if (!docId) {
+            console.log("Method 4: Getting docId from active tab");
+            // Try different selectors for active tab
+            const tabSelectors = [
+                ".tabs__item--active",
+                ".tab-item.active",
+                ".protyle-tabs__tab--active",
+                ".b3-tab--active"
+            ];
+            
+            for (const selector of tabSelectors) {
+                const activeTab = document.querySelector(selector);
+                if (activeTab) {
+                    console.log(`Found active tab with selector ${selector}:`, activeTab);
+                    // Check all possible attributes for document ID
+                    const possibleAttributes = ["data-node-id", "data-root-id", "data-block-id", "id", "data-id"];
+                    for (const attr of possibleAttributes) {
+                        const tabId = activeTab.getAttribute(attr);
+                        if (tabId) {
+                            console.log(`Found ID in ${attr}: ${tabId}`);
+                            docId = tabId;
+                            break;
+                        }
+                    }
+                    if (docId) break;
+                }
+            }
+        }
+        
+        // Method 5: Debug DOM structure
+        if (!docId) {
+            console.log("Method 5: Debugging DOM structure");
+            // Log all elements with data-node-id attribute (limit to first 20)
+            const elementsWithNodeId = document.querySelectorAll("[data-node-id]");
+            console.log(`Found ${elementsWithNodeId.length} elements with data-node-id:`);
+            Array.from(elementsWithNodeId).slice(0, 20).forEach((el, index) => {
+                const nodeId = el.getAttribute("data-node-id");
+                const className = (el as Element).className;
+                const tagName = (el as Element).tagName;
+                console.log(`  ${index}: ${tagName} ${nodeId} (class: ${className})`);
+            });
+            if (elementsWithNodeId.length > 20) {
+                console.log(`  ... and ${elementsWithNodeId.length - 20} more elements`);
+            }
+            
+            // Log all tab elements
+            const tabElements = document.querySelectorAll(".tabs__item, .tab-item, .protyle-tabs__tab, .b3-tab");
+            console.log(`Found ${tabElements.length} tab elements:`);
+            tabElements.forEach((el, index) => {
+                const className = (el as Element).className;
+                const isActive = (el as Element).classList.contains("active") || (el as Element).classList.contains("--active");
+                const allAttrs = Array.from((el as Element).attributes).map(attr => `${attr.name}="${attr.value}"`).join(" ");
+                console.log(`  ${index}: ${isActive ? "ACTIVE" : "inactive"} (${allAttrs})`);
+            });
+            
+            // Log current URL
+            console.log("Current URL:", window.location.href);
+            
+            // Log document body attributes
+            const bodyAttrs = Array.from(document.body.attributes).map(attr => `${attr.name}="${attr.value}"`).join(" ");
+            console.log("Document body attributes:", bodyAttrs);
+        }
+        
+        // Method 6: Try to get from nearest protyle element
+        if (!docId) {
+            console.log("Method 6: Getting docId from nearest protyle element");
+            const protyleElements = document.querySelectorAll('[class*="protyle"]');
+            console.log(`Found ${protyleElements.length} protyle elements`);
+            protyleElements.forEach((el, index) => {
+                const className = (el as Element).className;
+                const nodeId = el.getAttribute("data-node-id");
+                if (nodeId) {
+                    console.log(`  Protyle ${index} (${className}) has nodeId: ${nodeId}`);
+                    docId = nodeId;
+                }
+            });
+        }
+        
+        console.log("Menu created with docId:", docId, "protyle:", protyle);
+        
         const menu = new Menu("click2fill", () => {
 
         });
@@ -233,13 +430,12 @@ export default class PluginSample extends Plugin {
         
         if (matchedMenus.length > 0) {
             matchedMenus.forEach(menuConfig => {
-
                 menu.addItem({
                     id: menuConfig.id,
                     iconHTML: `<svg class="b3-menu__icon"><use xlink:href="#${menuConfig.icon}"></use></svg>`,
                     label: menuConfig.name,
                     click: () => {
-                        this.handleMenuClick(protyle, selectedText, menuConfig);
+                        this.handleMenuClick(protyle, selectedText, menuConfig, docId);
                     }
                 });
             });
@@ -274,25 +470,141 @@ export default class PluginSample extends Plugin {
         menu.open({x: x, y: y});
     }
     
-    private async handleMenuClick(protyle: Proactwrite, selectedText: string, menu: MenuConfig) {
+    private async handleMenuClick(protyle: Proactwrite, selectedText: string, menu: MenuConfig, docId?: string) {
+        console.log("=== handleMenuClick start ===");
+        console.log("Protyle:", protyle);
+        console.log("Selected text:", selectedText);
+        console.log("Menu config:", menu);
+        console.log("Passed docId:", docId);
+        
         try {
+            // Call HTTP API to get supplementary knowledge
             const data = await this.sendRequest(menu, selectedText);
+            console.log("Request data:", data);
+            
+            // Format the response content
             const content = this.formatResponse(data, menu);
-            this.insertContent(protyle, content);
-            showMessage(this.i18n.contentInserted);
+            console.log("Formatted content:", content);
+            
+            // Add the knowledge to the config for future use
+            this.addKnowledgeToConfig(selectedText, content, menu.id);
+            
+            // Use the insertion method configured in the menu
+            if (menu.insertionMethod === "subdocument") {
+                console.log("Inserting to subdocument...");
+                let finalDocId = docId;
+                
+                // If docId not passed or empty, try multiple methods to get it
+                if (!finalDocId) {
+                    console.log("No docId passed, trying multiple methods to get it...");
+                    
+                    // Method 1: From protyle object (if available)
+                    if (protyle) {
+                        console.log("Method 1: Getting docId from protyle object");
+                        if (protyle.block?.rootID) {
+                            finalDocId = protyle.block.rootID;
+                        } else if (protyle.rootID) {
+                            finalDocId = protyle.rootID;
+                        } else if (protyle.block?.id) {
+                            finalDocId = protyle.block.id;
+                        } else if (protyle.id) {
+                            finalDocId = protyle.id;
+                        }
+                    }
+                    
+                    // Method 2: From active editor element
+                    if (!finalDocId) {
+                        console.log("Method 2: Getting docId from active editor");
+                        const activeEditor = document.querySelector(".protyle-wysiwyg");
+                        if (activeEditor) {
+                            // Check all possible attributes for document ID
+                            const possibleAttributes = ["data-node-id", "data-root-id", "data-block-id", "id"];
+                            for (const attr of possibleAttributes) {
+                                const value = activeEditor.getAttribute(attr);
+                                if (value) {
+                                    console.log(`Found ID in ${attr}: ${value}`);
+                                    finalDocId = value;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                console.log("Final document ID:", finalDocId);
+                
+                if (finalDocId) {
+                    await this.insertToSubdocument(finalDocId, selectedText, content, protyle);
+                    console.log("Insert to subdocument completed");
+                } else {
+                    console.error("No document ID found after all methods");
+                    showMessage(this.i18n.requestFailed);
+                }
+            } else {
+                console.log("Inserting to current document...");
+                if (protyle) {
+                    this.insertContent(protyle, content);
+                    showMessage(this.i18n.contentInserted);
+                    console.log("Insert to current document completed");
+                } else {
+                    console.error("No protyle found for current document insertion");
+                    // Try fallback method for inserting to current document
+                    const activeEditor = document.querySelector(".protyle-wysiwyg");
+                    if (activeEditor) {
+                        const selection = window.getSelection();
+                        if (selection && selection.rangeCount > 0) {
+                            const range = selection.getRangeAt(0);
+                            range.collapse(false);
+                            
+                            // Create a temporary div to hold the HTML content
+                            const tempDiv = document.createElement("div");
+                            tempDiv.innerHTML = content;
+                            
+                            // Insert each child node of the temp div into the document
+                            while (tempDiv.firstChild) {
+                                range.insertNode(tempDiv.firstChild);
+                            }
+                            
+                            range.collapse(false);
+                            selection.removeAllRanges();
+                            selection.addRange(range);
+                            
+                            showMessage(this.i18n.contentInserted);
+                            console.log("Insert to current document completed (fallback method)");
+                        } else {
+                            showMessage(this.i18n.requestFailed);
+                            console.error("No selection found for fallback insertion");
+                        }
+                    } else {
+                        showMessage(this.i18n.requestFailed);
+                        console.error("No active editor found for fallback insertion");
+                    }
+                }
+            }
         } catch (error) {
+            console.error("Error in handleMenuClick:", error);
             showMessage(this.i18n.requestFailed);
         }
+        
+        console.log("=== handleMenuClick end ===");
     }
     
     private formatResponse(data: any, menu: MenuConfig): string {
+        const escapeHtml = (text: string): string => {
+            const div = document.createElement("div");
+            div.textContent = text;
+            return div.innerHTML;
+        };
+        
         if (menu.template) {
             try {
                 let rendered = menu.template.replace(/\$\{(\w+)\}/g, (match, key) => {
                     if (key === "data") {
-                        return typeof data === "object" ? JSON.stringify(data, null, 2) : String(data);
+                        const dataStr = typeof data === "object" ? JSON.stringify(data, null, 2) : String(data);
+                        return `<span class="plugin-click2fill__hover-link" title="${escapeHtml(dataStr)}">${escapeHtml(dataStr)}</span>`;
                     }
-                    return data[key] !== undefined ? data[key] : match;
+                    const value = data[key] !== undefined ? data[key] : match;
+                    return `<span class="plugin-click2fill__hover-link" title="${escapeHtml(String(value))}">${escapeHtml(String(value))}</span>`;
                 });
                 rendered = rendered.replace(/\\n/g, "\n");
                 return rendered;
@@ -301,11 +613,8 @@ export default class PluginSample extends Plugin {
             }
         }
         
-        if (typeof data === "object") {
-            return JSON.stringify(data, null, 2);
-        } else {
-            return String(data);
-        }
+        const content = typeof data === "object" ? JSON.stringify(data, null, 2) : String(data);
+        return `<span class="plugin-click2fill__hover-link" title="${escapeHtml(content)}">${escapeHtml(content)}</span>`;
     }
     
     private insertContent(protyle: Proactwrite, content: string) {
@@ -316,7 +625,16 @@ export default class PluginSample extends Plugin {
         
         const range = selection.getRangeAt(0);
         range.collapse(false);
-        range.insertNode(document.createTextNode(content));
+        
+        // Create a temporary div to hold the HTML content
+        const tempDiv = document.createElement("div");
+        tempDiv.innerHTML = content;
+        
+        // Insert each child node of the temp div into the document
+        while (tempDiv.firstChild) {
+            range.insertNode(tempDiv.firstChild);
+        }
+        
         range.collapse(false);
         selection.removeAllRanges();
         selection.addRange(range);
@@ -329,6 +647,395 @@ export default class PluginSample extends Plugin {
                 composed: true
             });
             activeElement.dispatchEvent(inputEvent);
+        }
+    }
+    
+    private async insertToSubdocument(currentDocId: string, selectedText: string, content: string, protyle?: Proactwrite) {
+        console.log("=== insertToSubdocument start ===");
+        console.log("Current doc ID:", currentDocId);
+        console.log("Selected text:", selectedText);
+        console.log("Content:", content);
+        console.log("Protyle:", protyle);
+        
+        try {
+            // Get document info to get notebook ID and path
+            const docInfo = await this.fetchPost("/api/filetree/getDoc", {
+                id: currentDocId,
+                mode: 0,
+                size: 1
+            });
+            console.log("Document info:", docInfo);
+            
+            if (!docInfo || !docInfo.box) {
+                console.error("Invalid document info, missing box:", docInfo);
+                showMessage(this.i18n.requestFailed);
+                return;
+            }
+            
+            const notebookId = docInfo.box;
+            console.log("Notebook ID:", notebookId);
+            
+            // Get parent document path to create subdocument in the same directory
+            const parentPath = docInfo.path ? docInfo.path.substring(0, docInfo.path.lastIndexOf(".sy")) : "";
+            console.log("Parent document path:", parentPath);
+            
+            // Generate a unique ID for the subdocument in SiYuan format: YYYYMMDDHHmmss-randomstring
+            const now = new Date();
+            const dateStr = now.toISOString().slice(0, 10).replace(/-/g, "");
+            const timeStr = now.toTimeString().slice(0, 8).replace(/:/g, "");
+            const randomStr = Math.random().toString(36).substring(2, 8);
+            const subdocId = `${dateStr}${timeStr}-${randomStr}`;
+            
+            // Create subdocument title and path
+            const subdocTitle = `配套知识：${selectedText}`;
+            const subdocPath = `${parentPath}/${subdocId}.sy`;
+            console.log("Subdoc title:", subdocTitle);
+            console.log("Subdoc ID:", subdocId);
+            console.log("Subdoc path:", subdocPath);
+            
+            // Create subdocument with markdown content
+            const createdSubdoc = await this.fetchPost("/api/filetree/createDoc", {
+                notebook: notebookId,
+                path: subdocPath,
+                title: subdocTitle,
+                md: `# ${subdocTitle}\n\n${content}`
+            });
+            
+            console.log("Created subdocument:", createdSubdoc);
+            
+            // Wait a moment for the subdocument to be fully created and indexed
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            // Step 1: Search for the block in the subdocument using searchRefBlock API
+            const searchResult = await this.fetchPost("/api/search/searchRefBlock", {
+                k: selectedText,
+                id: currentDocId,
+                beforeLen: 16,
+                rootID: docInfo.rootID || currentDocId,
+                isDatabase: false,
+                isSquareBrackets: false,
+                reqId: Date.now()
+            });
+            
+            console.log("Search ref block result:", searchResult);
+            
+            // Find the exact block we want to reference
+            let refBlockId = "";
+            if (searchResult?.blocks?.length > 0) {
+                // Look for the block in the newly created subdocument
+                const targetBlock = searchResult.blocks.find((block: any) => 
+                    block.id && block.content.includes(selectedText)
+                );
+                refBlockId = targetBlock?.id || "";
+            }
+            
+            // If search didn't find the block, use the subdocument ID as fallback
+            if (!refBlockId) {
+                refBlockId = subdocId;
+                console.log("Using subdocument ID as fallback ref block ID:", refBlockId);
+            }
+            
+            // Step 2: Get current selection and block info
+            const selection = window.getSelection();
+            if (!selection || selection.rangeCount === 0) {
+                console.error("No selection found");
+                showMessage(this.i18n.requestFailed);
+                return;
+            }
+            
+            const range = selection.getRangeAt(0);
+            let commonContainer = range.commonAncestorContainer;
+            
+            // Ensure commonContainer is an Element, not a Text node
+            if (commonContainer.nodeType === Node.TEXT_NODE) {
+                commonContainer = commonContainer.parentElement;
+            }
+            
+            if (!commonContainer || commonContainer.nodeType !== Node.ELEMENT_NODE) {
+                console.error("Invalid common container");
+                showMessage(this.i18n.requestFailed);
+                return;
+            }
+            
+            const blockElement = commonContainer.closest(".p") as HTMLElement;
+            if (!blockElement) {
+                console.error("No paragraph block found");
+                showMessage(this.i18n.requestFailed);
+                return;
+            }
+            
+            const blockId = blockElement.getAttribute("data-node-id");
+            if (!blockId) {
+                console.error("No block ID found");
+                showMessage(this.i18n.requestFailed);
+                return;
+            }
+            
+            // Step 3: Get current block content for undo operation
+            const currentBlockContent = blockElement.outerHTML;
+            console.log("Current block content:", currentBlockContent);
+            
+            // Step 4: Create new block content with the reference span
+            // Format: <span data-type="block-ref" data-id="refBlockId" data-subtype="s">selectedText</span>
+            const newContent = currentBlockContent.replace(
+                new RegExp(selectedText, "g"),
+                `<span data-type="block-ref" data-id="${refBlockId}" data-subtype="s">${selectedText}</span>`
+            );
+            console.log("New block content:", newContent);
+            
+            // Step 5: Use transactions API to update the block
+            // This is the key step that SiYuan uses internally to create references
+            const sessionId = `session-${Date.now()}`;
+            const transactionResult = await this.fetchPost("/api/transactions", {
+                session: sessionId,
+                app: "click2fill",
+                transactions: [{
+                    doOperations: [{
+                        id: blockId,
+                        data: newContent,
+                        action: "update"
+                    }],
+                    undoOperations: [{
+                        id: blockId,
+                        data: currentBlockContent,
+                        action: "update"
+                    }]
+                }],
+                reqId: Date.now()
+            });
+            
+            console.log("Transaction result:", transactionResult);
+            
+            if (transactionResult?.success) {
+                console.log("Selected text replaced with reference block successfully");
+                showMessage(this.i18n.contentInsertedToSubdoc);
+            } else {
+                console.error("Transaction failed, using fallback method");
+                // Fallback: use the old method with enhanced events
+                const hPathResult = await this.fetchPost("/api/filetree/getHPathByPath", {
+                    notebook: notebookId,
+                    path: subdocPath
+                });
+                const hPath = hPathResult?.hpath || subdocPath;
+                const refLink = `[[${hPath}|${selectedText}]]`;
+                this.replaceSelectionWithLink(refLink);
+            }
+            
+            console.log("Subdocument insertion completed successfully");
+        } catch (error) {
+            console.error("Error in insertToSubdocument:", error);
+            showMessage(this.i18n.requestFailed);
+        }
+        
+        console.log("=== insertToSubdocument end ===");
+    }
+    
+    private replaceSelectionWithLink(link: string) {
+        const activeEditor = document.querySelector(".protyle-wysiwyg");
+        if (!activeEditor) {
+            console.error("No active editor found");
+            return;
+        }
+        
+        // Get the root ID of the current document
+        const rootId = activeEditor.getAttribute("data-node-id") || activeEditor.getAttribute("data-root-id");
+        if (!rootId) {
+            console.error("No root ID found for active editor");
+            return;
+        }
+        
+        try {
+            // Use SiYuan's built-in API to replace selection with link
+            // The selection is already handled by the editor, we just need to insert the link text
+            const selection = window.getSelection();
+            if (selection && selection.rangeCount > 0) {
+                const range = selection.getRangeAt(0);
+                
+                // Delete the selected text
+                range.deleteContents();
+                
+                // Insert the link text
+                const linkText = document.createTextNode(link);
+                range.insertNode(linkText);
+                
+                // Move cursor to end of inserted text
+                range.setStartAfter(linkText);
+                range.collapse(true);
+                selection.removeAllRanges();
+                selection.addRange(range);
+                
+                // Trigger a more comprehensive update event to ensure the editor re-parses the content
+                const event = new CustomEvent("input", {
+                    bubbles: true,
+                    cancelable: true,
+                    composed: true,
+                    detail: { source: "click2fill-plugin" }
+                });
+                activeEditor.dispatchEvent(event);
+                
+                // Also trigger a keyup event which might help with parsing
+                const keyupEvent = new KeyboardEvent("keyup", {
+                    bubbles: true,
+                    cancelable: true,
+                    key: "Enter"
+                });
+                activeEditor.dispatchEvent(keyupEvent);
+                
+                console.log("Link inserted and editor updated");
+            }
+        } catch (error) {
+            console.error("Failed to replace selection with link:", error);
+            // Fallback to simple text insertion if the above method fails
+            this.fallbackReplaceSelection(link);
+        }
+    }
+    
+    private fallbackReplaceSelection(link: string) {
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0) {
+            return;
+        }
+        
+        const range = selection.getRangeAt(0);
+        const container = range.commonAncestorContainer;
+        
+        // Find the closest block element
+        let blockElement = container;
+        while (blockElement && !(blockElement as HTMLElement).hasAttribute("data-node-id")) {
+            blockElement = blockElement.parentNode;
+            if (!blockElement) break;
+        }
+        
+        if (blockElement && (blockElement as HTMLElement).hasAttribute("data-node-id")) {
+            const blockId = (blockElement as HTMLElement).getAttribute("data-node-id");
+            if (blockId) {
+                console.log("Using block ID for fallback replacement:", blockId);
+                // Use SiYuan API to update the block content
+                this.updateBlockContent(blockId, link).catch(error => {
+                    console.error("Failed to update block content:", error);
+                    // Ultimate fallback: direct text insertion
+                    this.directTextInsertion(range, link);
+                });
+                return;
+            }
+        }
+        
+        // Ultimate fallback: direct text insertion
+        this.directTextInsertion(range, link);
+    }
+    
+    private directTextInsertion(range: Range, link: string) {
+        // Delete the selected text
+        range.deleteContents();
+        
+        // Create text node with the link
+        const textNode = document.createTextNode(link);
+        range.insertNode(textNode);
+        
+        // Move cursor to end of inserted text
+        range.setStartAfter(textNode);
+        range.collapse(true);
+        
+        // Update selection
+        const selection = window.getSelection();
+        if (selection) {
+            selection.removeAllRanges();
+            selection.addRange(range);
+        }
+        
+        // Trigger multiple events to ensure the editor updates
+        const activeElement = document.activeElement;
+        if (activeElement) {
+            // Trigger input event
+            activeElement.dispatchEvent(new InputEvent("input", {
+                bubbles: true,
+                cancelable: true,
+                composed: true
+            }));
+            
+            // Trigger change event
+            activeElement.dispatchEvent(new Event("change", {
+                bubbles: true,
+                cancelable: true
+            }));
+            
+            // Trigger blur and focus to force re-parsing
+            activeElement.blur();
+            setTimeout(() => activeElement.focus(), 0);
+        }
+    }
+    
+    private async updateBlockContent(blockId: string, content: string) {
+        try {
+            // Use SiYuan's API to update the block content
+            const response = await this.fetchPost("/api/block/updateBlock", {
+                id: blockId,
+                dataType: "markdown",
+                data: content
+            });
+            console.log("Block content updated successfully:", response);
+            return response;
+        } catch (error) {
+            console.error("Failed to update block content:", error);
+            throw error;
+        }
+    }
+    
+    private async appendContentToDocument(docId: string, content: string) {
+        console.log("=== appendContentToDocument start ===");
+        console.log("Doc ID:", docId);
+        console.log("Content:", content);
+        
+        try {
+            await this.fetchPost("/api/block/appendBlock", {
+                id: docId,
+                dataType: "markdown",
+                data: content
+            });
+            console.log("Content appended successfully");
+        } catch (error) {
+            console.error("Error in appendContentToDocument:", error);
+            throw new Error("Failed to append content to document");
+        }
+        
+        console.log("=== appendContentToDocument end ===");
+    }
+    
+    private async fetchPost(url: string, data: any): Promise<any> {
+        console.log("=== fetchPost start ===");
+        console.log("URL:", url);
+        console.log("Data:", data);
+        
+        try {
+            const response = await fetch(url, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify(data)
+            });
+            
+            console.log("Response status:", response.status);
+            console.log("Response ok:", response.ok);
+            
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            
+            const result = await response.json();
+            console.log("Response result:", result);
+            
+            // Check if response has a data property (Siyuan API format)
+            if (result && result.code === 0 && result.data !== undefined) {
+                console.log("Returning result.data:", result.data);
+                return result.data;
+            }
+            
+            console.log("=== fetchPost end ===");
+            return result;
+        } catch (error) {
+            console.error("Error in fetchPost:", error);
+            throw error;
         }
     }
     
@@ -539,26 +1246,33 @@ export default class PluginSample extends Plugin {
                         <label>${this.i18n.menuTemplate}</label>
                         <textarea id="plugin-click2fill__menu-template" class="b3-text-field fn__block" rows="3">${menu?.template || "${data}"}</textarea>
                     </div>
-                    <div class="plugin-click2fill__form-item">
-                        <label>${this.i18n.displayMethod}</label>
-                        <select id="plugin-click2fill__display-method" class="b3-select">
-                            <option value="always" ${(!menu?.keyword && !menu?.regex) ? "selected" : ""}>${this.i18n.alwaysDisplay}</option>
-                            <option value="keyword" ${(menu?.keyword && !menu?.regex) ? "selected" : ""}>${this.i18n.displayByKeyword}</option>
-                            <option value="regex" ${menu?.regex ? "selected" : ""}>${this.i18n.displayByRegex}</option>
-                        </select>
-                        <div class="plugin-click2fill__form-hint">${this.i18n.displayMethodHint}</div>
-                    </div>
-                    <div class="plugin-click2fill__form-item" id="plugin-click2fill__keyword-section" style="display: ${(menu?.keyword && !menu?.regex) ? "block" : "none"};">
-                        <label>${this.i18n.keyword}</label>
-                        <input type="text" id="plugin-click2fill__menu-keyword" class="b3-text-field" value="${menu?.keyword || ""}" placeholder="${this.i18n.keywordPlaceholder}">
-                    </div>
-                    <div class="plugin-click2fill__form-item" id="plugin-click2fill__regex-section" style="display: ${menu?.regex ? "block" : "none"};">
-                        <label>${this.i18n.regex}</label>
-                        <input type="text" id="plugin-click2fill__menu-regex" class="b3-text-field" value="${menu?.regex || ""}" placeholder="${this.i18n.regexPlaceholder}">
-                    </div>
                     <details class="plugin-click2fill__advanced-section">
                         <summary class="plugin-click2fill__advanced-toggle">高级设置</summary>
                         <div class="plugin-click2fill__advanced-content">
+                            <div class="plugin-click2fill__form-item">
+                                <label style="display: block; margin-bottom: 8px;">${this.i18n.displayMethod}</label>
+                                <select id="plugin-click2fill__display-method" class="b3-select" style="display: block; width: 100%;">
+                                    <option value="always" ${(!menu?.keyword && !menu?.regex) ? "selected" : ""}>${this.i18n.alwaysDisplay}</option>
+                                    <option value="keyword" ${(menu?.keyword && !menu?.regex) ? "selected" : ""}>${this.i18n.displayByKeyword}</option>
+                                    <option value="regex" ${menu?.regex ? "selected" : ""}>${this.i18n.displayByRegex}</option>
+                                </select>
+                                <div class="plugin-click2fill__form-hint">${this.i18n.displayMethodHint}</div>
+                            </div>
+                            <div class="plugin-click2fill__form-item" id="plugin-click2fill__keyword-section" style="display: ${(menu?.keyword && !menu?.regex) ? "block" : "none"};">
+                                <label style="display: block; margin-bottom: 8px;">${this.i18n.keyword}</label>
+                                <input type="text" id="plugin-click2fill__menu-keyword" class="b3-text-field" style="display: block; width: 100%;" value="${menu?.keyword || ""}" placeholder="${this.i18n.keywordPlaceholder}">
+                            </div>
+                            <div class="plugin-click2fill__form-item" id="plugin-click2fill__regex-section" style="display: ${menu?.regex ? "block" : "none"};">
+                                <label style="display: block; margin-bottom: 8px;">${this.i18n.regex}</label>
+                                <input type="text" id="plugin-click2fill__menu-regex" class="b3-text-field" style="display: block; width: 100%;" value="${menu?.regex || ""}" placeholder="${this.i18n.regexPlaceholder}">
+                            </div>
+                            <div class="plugin-click2fill__form-item">
+                                <label style="display: block; margin-bottom: 8px;">${this.i18n.insertionMethod}</label>
+                                <select id="plugin-click2fill__insertion-method" class="b3-select" style="display: block; width: 100%;">
+                                    <option value="current" ${menu?.insertionMethod === "current" ? "selected" : ""}>${this.i18n.insertToCurrentDocument}</option>
+                                    <option value="subdocument" ${menu?.insertionMethod === "subdocument" ? "selected" : ""}>${this.i18n.insertToSubdocument}</option>
+                                </select>
+                            </div>
                             <div class="plugin-click2fill__form-item">
                                 <label>${this.i18n.menuHeaders}</label>
                                 <textarea id="plugin-click2fill__menu-headers" class="b3-text-field fn__block" rows="3">${menu?.headers ? JSON.stringify(menu.headers, null, 2) : "{}"}</textarea>
@@ -636,6 +1350,7 @@ export default class PluginSample extends Plugin {
         const keyword = document.getElementById("plugin-click2fill__menu-keyword") as HTMLInputElement;
         const regex = document.getElementById("plugin-click2fill__menu-regex") as HTMLInputElement;
         const template = document.getElementById("plugin-click2fill__menu-template") as HTMLTextAreaElement;
+        const insertionMethod = document.getElementById("plugin-click2fill__insertion-method") as HTMLSelectElement;
         
         if (!name.value.trim() || !url.value.trim()) {
             showMessage("请填写必填字段");
@@ -669,7 +1384,8 @@ export default class PluginSample extends Plugin {
             responseType: "json",
             template: template.value.trim(),
             keyword: keyword.value.trim(),
-            regex: regex.value.trim()
+            regex: regex.value.trim(),
+            insertionMethod: insertionMethod.value
         };
         
         if (menuId) {
@@ -710,7 +1426,7 @@ export default class PluginSample extends Plugin {
     private generateMenuId(): string {
         return "menu-" + Date.now() + "-" + Math.floor(Math.random() * 1000);
     }
-
+    
     /* 自定义设置
     openSetting() {
         const dialog = new Dialog({

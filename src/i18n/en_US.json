@@ -37,5 +37,11 @@
   "alwaysDisplay": "Always Display",
   "displayByKeyword": "Display by Keyword Match",
   "displayByRegex": "Display by Regex Match",
-  "displayMethodHint": ""
+  "displayMethodHint": "",
+  "insertionMethod": "Result Rendering Method",
+  "insertToCurrentDocument": "Insert to Current Document",
+  "insertToSubdocument": "Insert to Subdocument",
+  "confirm": "Confirm",
+  "subdocumentCreated": "Supporting Knowledge subdocument created",
+  "contentInsertedToSubdoc": "Content inserted to Supporting Knowledge subdocument"
 }
