@@ -25,7 +25,8 @@ export default class PluginSample extends Plugin {
 
     private config: PluginConfig;
 
-    onload() {
+    async onload() {
+        await this.loadConfig();
         this.addIcons(`<symbol id="iconFace" viewBox="0 0 32 32">
 <path d="M13.667 17.333c0 0.92-0.747 1.667-1.667 1.667s-1.667-0.747-1.667-1.667 0.747-1.667 1.667-1.667 1.667 0.747 1.667 1.667zM20 15.667c-0.92 0-1.667 0.747-1.667 1.667s0.747 1.667 1.667 1.667 1.667-0.6 1.667-1.333c0-0.733-0.6-1.333-1.333-1.333s-1.333 0.6-1.333 1.333zM14.213 5.493c1.867 3.093 5.253 5.173 9.12 5.173 0.613 0 1.213-0.067 1.787-0.16-1.867-3.093-5.253-5.173-9.12-5.173-0.613 0-1.213 0.067-1.787 0.16zM5.893 12.627c2.28-1.293 4.04-3.4 4.88-5.92-2.28 1.293-4.04 3.4-4.88 5.92zM26.667 16c0-1.040-0.16-2.040-0.44-2.987-0.933 0.2-1.893 0.32-2.893 0.32-4.173 0-7.893-1.92-10.347-4.92-1.4 3.413-4.187 6.093-7.653 7.4 0.013 0.053 0 0.12 0 0.187 0 5.88 4.787 10.667 10.667 10.667s10.667-4.787 10.667-10.667z"></path>
 </symbol>
@@ -46,27 +47,54 @@ export default class PluginSample extends Plugin {
         this.addCommand({
             langKey: "openMenu",
             hotkey: "⇧⌘I",
-            callback: (protyle: Proactwrite) => {
+            callback: async (protyle: Proactwrite) => {
                 const selectedText = window.getSelection().toString().trim();
                 if (!selectedText) {
                     showMessage(this.i18n.selectTextFirst);
                     return;
                 }
-                this.showDynamicMenu(protyle, selectedText);
+                await this.showDynamicMenu(protyle, selectedText);
             },
         });
     }
     
-    private loadConfig() {
-        const storedConfig = this.data[STORAGE_NAME] || {};
-        this.config = {
-            menus: Array.isArray(storedConfig.menus) ? storedConfig.menus : [],
-            defaultMenu: storedConfig.defaultMenu || ""
-        };
+    private async loadConfig() {
+        // loadData 是异步方法，需要使用 await
+        const storedConfig = await this.loadData(STORAGE_NAME) || {};
+        
+        // 处理可能的数据结构不一致问题
+        // 如果 storedConfig 本身是数组，说明是旧版本的数据结构
+        if (Array.isArray(storedConfig)) {
+            this.config = {
+                menus: storedConfig,
+                defaultMenu: ""
+            };
+            // 转换后保存新格式
+            await this.saveConfig();
+        } else {
+            // 新的数据结构，有 menus 和 defaultMenu 属性
+            this.config = {
+                menus: Array.isArray(storedConfig.menus) ? storedConfig.menus : [],
+                defaultMenu: storedConfig.defaultMenu || ""
+            };
+        }
     }
     
-    private saveConfig() {
-        this.saveData(STORAGE_NAME, this.config);
+    private async saveConfig() {
+        // 确保 this.config 有正确的结构
+        if (!this.config) {
+            this.config = {
+                menus: [],
+                defaultMenu: ""
+            };
+        }
+        
+        if (!Array.isArray(this.config.menus)) {
+            this.config.menus = [];
+        }
+        
+        // saveData 是异步方法，需要使用 await
+        await this.saveData(STORAGE_NAME, this.config);
     }
     
     private async sendRequest(menu: MenuConfig, selectedText: string): Promise<any> {
@@ -106,6 +134,7 @@ export default class PluginSample extends Plugin {
             method: menu.method || "GET",
             headers: {
                 "Content-Type": "application/json",
+                "User-Agent": menu.headers["User-Agent"] || (this.app?.config?.ai?.openAI?.apiUserAgent || "Siyuan-Click2Fill-Plugin"),
                 ...menu.headers
             }
         };
@@ -152,12 +181,12 @@ export default class PluginSample extends Plugin {
         return data;
     }
 
-    onLayoutReady() {
-        this.loadConfig();
+    async onLayoutReady() {
+        await this.loadConfig();
     }
 
-    onunload() {
-
+    async onunload() {
+        await this.saveConfig();
     }
 
     async uninstall() {
@@ -189,9 +218,9 @@ export default class PluginSample extends Plugin {
         return true;
     }
     
-    private showDynamicMenu(protyle: Proactwrite, selectedText: string) {
+    private async showDynamicMenu(protyle: Proactwrite, selectedText: string) {
         if (!this.config || !Array.isArray(this.config.menus)) {
-            this.loadConfig();
+            await this.loadConfig();
         }
         
         const menu = new Menu("click2fill", () => {
@@ -222,8 +251,8 @@ export default class PluginSample extends Plugin {
             id: "configure",
             iconHTML: "<svg class=\"b3-menu__icon\"><use xlink:href=\"#iconSettings\"></use></svg>",
             label: this.i18n.configure,
-            click: () => {
-                this.openConfigurePanel();
+            click: async () => {
+                await this.openConfigurePanel();
             }
         });
         
@@ -303,7 +332,12 @@ export default class PluginSample extends Plugin {
         }
     }
     
-    private openConfigurePanel() {
+    private async openConfigurePanel() {
+        // 确保配置已加载
+        if (!this.config || !Array.isArray(this.config.menus)) {
+            await this.loadConfig();
+        }
+        
         const dialog = new Dialog({
             title: this.i18n.configure,
             content: `
