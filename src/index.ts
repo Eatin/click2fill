@@ -279,47 +279,49 @@ export default class PluginSample extends Plugin {
         // Get document ID when menu is created (before context is lost)
         let docId;
         
-        // Method 1: From protyle object (if available)
+        // Method 1: From protyle object (most reliable)
         if (protyle) {
-            // Try to get document ID from different properties
+            // Try to get document ID from different properties, prioritizing rootID
             if (protyle.block?.rootID) {
                 docId = protyle.block.rootID;
             } else if (protyle.rootID) {
                 docId = protyle.rootID;
             } else if (protyle.block?.id) {
-                docId = protyle.block.id;
+                // If we only have block ID, get document ID from API
+                try {
+                    const blockInfo = await this.fetchPost("/api/block/getBlockInfo", {
+                        id: protyle.block.id
+                    });
+                    if (blockInfo && blockInfo.rootID) {
+                        docId = blockInfo.rootID;
+                    }
+                } catch (error) {
+                    console.error("Failed to get root ID from block ID:", error);
+                }
             } else if (protyle.id) {
                 docId = protyle.id;
             }
         }
         
-        // Method 2: From active editor element
+        // Method 2: From active editor element (get root ID specifically)
         if (!docId) {
             const activeEditor = document.querySelector(".protyle-wysiwyg");
             if (activeEditor) {
-                // Log all attributes of activeEditor
-                // Check all possible attributes for document ID
-                const possibleAttributes = ["data-node-id", "data-root-id", "data-block-id", "id"];
-                for (const attr of possibleAttributes) {
-                    const value = activeEditor.getAttribute(attr);
-                    if (value) {
-                        docId = value;
-                        break;
-                    }
-                }
+                // Prioritize data-root-id for document ID
+                docId = activeEditor.getAttribute("data-root-id") || activeEditor.getAttribute("data-node-id");
             }
         }
         
-        // Method 3: From URL hash
+        // Method 3: From URL hash (for document views)
         if (!docId) {
             const hash = window.location.hash;
             if (hash) {
-                // Try different URL patterns
+                // Try different URL patterns for document ID
                 const patterns = [
-                    /^#\/([a-f0-9]{20})$/i, // Original pattern
-                    /^#\/([a-z0-9-]{22})$/i, // Pattern with hyphen
-                    /id=([a-f0-9]{20})/i,    // Query parameter pattern
-                    /node=([a-f0-9]{20})/i   // Another query parameter pattern
+                    /^#\/([a-f0-9]{20})$/i, // Original document ID pattern
+                    /^#\/([a-z0-9-]{22})$/i, // Document ID with hyphen
+                    /doc=([a-f0-9]{20})/i,    // Query parameter for document
+                    /note=([a-f0-9]{20})/i     // Another document query parameter
                 ];
                 for (const pattern of patterns) {
                     const match = hash.match(pattern);
@@ -331,7 +333,7 @@ export default class PluginSample extends Plugin {
             }
         }
         
-        // Method 4: From active tab
+        // Method 4: From active tab (get root ID)
         if (!docId) {
             // Try different selectors for active tab
             const tabSelectors = [
@@ -344,8 +346,8 @@ export default class PluginSample extends Plugin {
             for (const selector of tabSelectors) {
                 const activeTab = document.querySelector(selector);
                 if (activeTab) {
-                    // Check all possible attributes for document ID
-                    const possibleAttributes = ["data-node-id", "data-root-id", "data-block-id", "id", "data-id"];
+                    // Check for root ID attributes first
+                    const possibleAttributes = ["data-root-id", "data-node-id", "data-id", "id"];
                     for (const attr of possibleAttributes) {
                         const tabId = activeTab.getAttribute(attr);
                         if (tabId) {
@@ -358,44 +360,21 @@ export default class PluginSample extends Plugin {
             }
         }
         
-        // Method 5: Debug DOM structure
+        // Method 5: As a last resort, get from nearest protyle root element
         if (!docId) {
-            // Log all elements with data-node-id attribute (limit to first 20)
-            const elementsWithNodeId = document.querySelectorAll("[data-node-id]");
-            Array.from(elementsWithNodeId).slice(0, 20).forEach((el, index) => {
-                const nodeId = el.getAttribute("data-node-id");
-                const className = (el as Element).className;
-                const tagName = (el as Element).tagName;
-            });
-            if (elementsWithNodeId.length > 20) {
-            }
-            
-            // Log all tab elements
-            const tabElements = document.querySelectorAll(".tabs__item, .tab-item, .protyle-tabs__tab, .b3-tab");
-            tabElements.forEach((el, index) => {
-                const className = (el as Element).className;
-                const isActive = (el as Element).classList.contains("active") || (el as Element).classList.contains("--active");
-                const allAttrs = Array.from((el as Element).attributes).map(attr => `${attr.name}="${attr.value}"`).join(" ");
-            });
-            
-            // Log current URL
-            
-            // Log document body attributes
-            const bodyAttrs = Array.from(document.body.attributes).map(attr => `${attr.name}="${attr.value}"`).join(" ");
-        }
-        
-        // Method 6: Try to get from nearest protyle element
-        if (!docId) {
-            const protyleElements = document.querySelectorAll('[class*="protyle"]');
-            protyleElements.forEach((el, index) => {
-                const className = (el as Element).className;
-                const nodeId = el.getAttribute("data-node-id");
-                if (nodeId) {
-                    docId = nodeId;
+            // Find all protyle elements and check their root IDs
+            const protyleRoots = document.querySelectorAll(".protyle");
+            for (const root of Array.from(protyleRoots)) {
+                const rootId = root.getAttribute("data-root-id") || root.getAttribute("data-node-id");
+                if (rootId) {
+                    docId = rootId;
+                    break;
                 }
-            });
+            }
         }
         
+        // Log the final docId for debugging
+        console.log("Final docId:", docId);
         
         const menu = new Menu("click2fill", () => {
 
@@ -466,36 +445,49 @@ export default class PluginSample extends Plugin {
                 // If docId not passed or empty, try multiple methods to get it
                 if (!finalDocId) {
                     
-                    // Method 1: From protyle object (if available)
+                    // Method 1: From protyle object (most reliable)
                     if (protyle) {
+                        // Prioritize rootID for document ID
                         if (protyle.block?.rootID) {
                             finalDocId = protyle.block.rootID;
                         } else if (protyle.rootID) {
                             finalDocId = protyle.rootID;
                         } else if (protyle.block?.id) {
-                            finalDocId = protyle.block.id;
+                            // If we only have block ID, get document ID from API
+                            try {
+                                const blockInfo = await this.fetchPost("/api/block/getBlockInfo", {
+                                    id: protyle.block.id
+                                });
+                                if (blockInfo && blockInfo.rootID) {
+                                    finalDocId = blockInfo.rootID;
+                                }
+                            } catch (error) {
+                                console.error("Failed to get root ID from block ID:", error);
+                            }
                         } else if (protyle.id) {
                             finalDocId = protyle.id;
                         }
                     }
                     
-                    // Method 2: From active editor element
+                    // Method 2: From active editor element (get root ID specifically)
                     if (!finalDocId) {
                         const activeEditor = document.querySelector(".protyle-wysiwyg");
                         if (activeEditor) {
-                            // Check all possible attributes for document ID
-                            const possibleAttributes = ["data-node-id", "data-root-id", "data-block-id", "id"];
-                            for (const attr of possibleAttributes) {
-                                const value = activeEditor.getAttribute(attr);
-                                if (value) {
-                                    finalDocId = value;
-                                    break;
-                                }
-                            }
+                            // Prioritize data-root-id for document ID
+                            finalDocId = activeEditor.getAttribute("data-root-id") || activeEditor.getAttribute("data-node-id");
+                        }
+                    }
+                    
+                    // Method 3: From protyle root element
+                    if (!finalDocId) {
+                        const protyleRoot = document.querySelector(".protyle");
+                        if (protyleRoot) {
+                            finalDocId = protyleRoot.getAttribute("data-root-id") || protyleRoot.getAttribute("data-node-id");
                         }
                     }
                 }
                 
+                console.log("Final docId in handleMenuClick:", finalDocId);
                 
                 if (finalDocId) {
                     await this.insertToSubdocument(finalDocId, selectedText, content, protyle);
