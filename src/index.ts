@@ -704,31 +704,20 @@ export default class PluginSample extends Plugin {
             // Wait a moment for the subdocument to be fully created and indexed
             await new Promise(resolve => setTimeout(resolve, 500));
             
-            // Step 1: Search for the block in the subdocument using searchRefBlock API
-            const searchResult = await this.fetchPost("/api/search/searchRefBlock", {
-                k: selectedText,
-                id: currentDocId,
-                beforeLen: 16,
-                rootID: docInfo.rootID || currentDocId,
-                isDatabase: false,
-                isSquareBrackets: false,
-                reqId: Date.now()
-            });
+            // Step 1: Use the subdocument ID directly as the reference
+            // We know the content is in the newly created subdocument, so we can use its ID directly
+            // This ensures the hover shows the subdocument content, not the parent document
+            let refBlockId = subdocId;
             
-            
-            // Find the exact block we want to reference
-            let refBlockId = "";
-            if (searchResult?.blocks?.length > 0) {
-                // Look for the block in the newly created subdocument
-                const targetBlock = searchResult.blocks.find((block: any) => 
-                    block.id && block.content.includes(selectedText)
-                );
-                refBlockId = targetBlock?.id || "";
-            }
-            
-            // If search didn't find the block, use the subdocument ID as fallback
-            if (!refBlockId) {
-                refBlockId = subdocId;
+            // Optional: Verify the subdocument was created successfully
+            if (!createdSubdoc) {
+                console.error("Failed to verify subdocument creation");
+            } else {
+                console.log("Subdocument created successfully:", {
+                    subdocId,
+                    subdocTitle,
+                    subdocPath
+                });
             }
             
             // Step 2: Get current selection and block info
