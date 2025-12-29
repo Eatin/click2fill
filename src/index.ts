@@ -596,7 +596,7 @@ export default class PluginSample extends Plugin {
                     
                     if (path === "data") {
                         const dataStr = typeof data === "object" ? JSON.stringify(data, null, 2) : String(data);
-                        return `<span class="plugin-click2fill__hover-link" title="${escapeHtml(dataStr)}">${escapeHtml(dataStr)}</span>`;
+                        return `<span class="plugin-click2fill__hover-link" title="点击查看详细内容">${escapeHtml(dataStr)}</span>`;
                     } else if (path === "selectText") {
                         return `<span class="plugin-click2fill__hover-link" title="${escapeHtml(selectedText)}">${escapeHtml(selectedText)}</span>`;
                     }
@@ -615,7 +615,7 @@ export default class PluginSample extends Plugin {
         }
         
         const content = typeof data === "object" ? JSON.stringify(data, null, 2) : String(data);
-        return `<span class="plugin-click2fill__hover-link" title="${escapeHtml(content)}">${escapeHtml(content)}</span>`;
+        return `<span class="plugin-click2fill__hover-link" title="点击查看详细内容">${escapeHtml(content)}</span>`;
     }
     
     private insertContent(protyle: Proactwrite, content: string) {
