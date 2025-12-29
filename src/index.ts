@@ -147,7 +147,7 @@ export default class PluginSample extends Plugin {
             console.error("Failed to save knowledge to config:", error);
         });
         
-        console.log("Added knowledge to config:", knowledgeItem);
+
     }
     
     private async sendRequest(menu: MenuConfig, selectedText: string): Promise<any> {
@@ -281,7 +281,6 @@ export default class PluginSample extends Plugin {
         
         // Method 1: From protyle object (if available)
         if (protyle) {
-            console.log("Method 1: Getting docId from protyle object");
             // Try to get document ID from different properties
             if (protyle.block?.rootID) {
                 docId = protyle.block.rootID;
@@ -296,18 +295,14 @@ export default class PluginSample extends Plugin {
         
         // Method 2: From active editor element
         if (!docId) {
-            console.log("Method 2: Getting docId from active editor");
             const activeEditor = document.querySelector(".protyle-wysiwyg");
-            console.log("Active editor element:", activeEditor);
             if (activeEditor) {
                 // Log all attributes of activeEditor
-                console.log("Active editor attributes:", activeEditor.attributes);
                 // Check all possible attributes for document ID
                 const possibleAttributes = ["data-node-id", "data-root-id", "data-block-id", "id"];
                 for (const attr of possibleAttributes) {
                     const value = activeEditor.getAttribute(attr);
                     if (value) {
-                        console.log(`Found ID in ${attr}: ${value}`);
                         docId = value;
                         break;
                     }
@@ -317,9 +312,7 @@ export default class PluginSample extends Plugin {
         
         // Method 3: From URL hash
         if (!docId) {
-            console.log("Method 3: Getting docId from URL hash");
             const hash = window.location.hash;
-            console.log("URL hash:", hash);
             if (hash) {
                 // Try different URL patterns
                 const patterns = [
@@ -331,7 +324,6 @@ export default class PluginSample extends Plugin {
                 for (const pattern of patterns) {
                     const match = hash.match(pattern);
                     if (match && match[1]) {
-                        console.log(`Found ID from URL pattern ${pattern}: ${match[1]}`);
                         docId = match[1];
                         break;
                     }
@@ -341,7 +333,6 @@ export default class PluginSample extends Plugin {
         
         // Method 4: From active tab
         if (!docId) {
-            console.log("Method 4: Getting docId from active tab");
             // Try different selectors for active tab
             const tabSelectors = [
                 ".tabs__item--active",
@@ -353,13 +344,11 @@ export default class PluginSample extends Plugin {
             for (const selector of tabSelectors) {
                 const activeTab = document.querySelector(selector);
                 if (activeTab) {
-                    console.log(`Found active tab with selector ${selector}:`, activeTab);
                     // Check all possible attributes for document ID
                     const possibleAttributes = ["data-node-id", "data-root-id", "data-block-id", "id", "data-id"];
                     for (const attr of possibleAttributes) {
                         const tabId = activeTab.getAttribute(attr);
                         if (tabId) {
-                            console.log(`Found ID in ${attr}: ${tabId}`);
                             docId = tabId;
                             break;
                         }
@@ -371,54 +360,42 @@ export default class PluginSample extends Plugin {
         
         // Method 5: Debug DOM structure
         if (!docId) {
-            console.log("Method 5: Debugging DOM structure");
             // Log all elements with data-node-id attribute (limit to first 20)
             const elementsWithNodeId = document.querySelectorAll("[data-node-id]");
-            console.log(`Found ${elementsWithNodeId.length} elements with data-node-id:`);
             Array.from(elementsWithNodeId).slice(0, 20).forEach((el, index) => {
                 const nodeId = el.getAttribute("data-node-id");
                 const className = (el as Element).className;
                 const tagName = (el as Element).tagName;
-                console.log(`  ${index}: ${tagName} ${nodeId} (class: ${className})`);
             });
             if (elementsWithNodeId.length > 20) {
-                console.log(`  ... and ${elementsWithNodeId.length - 20} more elements`);
             }
             
             // Log all tab elements
             const tabElements = document.querySelectorAll(".tabs__item, .tab-item, .protyle-tabs__tab, .b3-tab");
-            console.log(`Found ${tabElements.length} tab elements:`);
             tabElements.forEach((el, index) => {
                 const className = (el as Element).className;
                 const isActive = (el as Element).classList.contains("active") || (el as Element).classList.contains("--active");
                 const allAttrs = Array.from((el as Element).attributes).map(attr => `${attr.name}="${attr.value}"`).join(" ");
-                console.log(`  ${index}: ${isActive ? "ACTIVE" : "inactive"} (${allAttrs})`);
             });
             
             // Log current URL
-            console.log("Current URL:", window.location.href);
             
             // Log document body attributes
             const bodyAttrs = Array.from(document.body.attributes).map(attr => `${attr.name}="${attr.value}"`).join(" ");
-            console.log("Document body attributes:", bodyAttrs);
         }
         
         // Method 6: Try to get from nearest protyle element
         if (!docId) {
-            console.log("Method 6: Getting docId from nearest protyle element");
             const protyleElements = document.querySelectorAll('[class*="protyle"]');
-            console.log(`Found ${protyleElements.length} protyle elements`);
             protyleElements.forEach((el, index) => {
                 const className = (el as Element).className;
                 const nodeId = el.getAttribute("data-node-id");
                 if (nodeId) {
-                    console.log(`  Protyle ${index} (${className}) has nodeId: ${nodeId}`);
                     docId = nodeId;
                 }
             });
         }
         
-        console.log("Menu created with docId:", docId, "protyle:", protyle);
         
         const menu = new Menu("click2fill", () => {
 
@@ -471,36 +448,26 @@ export default class PluginSample extends Plugin {
     }
     
     private async handleMenuClick(protyle: Proactwrite, selectedText: string, menu: MenuConfig, docId?: string) {
-        console.log("=== handleMenuClick start ===");
-        console.log("Protyle:", protyle);
-        console.log("Selected text:", selectedText);
-        console.log("Menu config:", menu);
-        console.log("Passed docId:", docId);
         
         try {
             // Call HTTP API to get supplementary knowledge
             const data = await this.sendRequest(menu, selectedText);
-            console.log("Request data:", data);
             
             // Format the response content
-            const content = this.formatResponse(data, menu);
-            console.log("Formatted content:", content);
+            const content = this.formatResponse(data, menu, selectedText);
             
             // Add the knowledge to the config for future use
             this.addKnowledgeToConfig(selectedText, content, menu.id);
             
             // Use the insertion method configured in the menu
             if (menu.insertionMethod === "subdocument") {
-                console.log("Inserting to subdocument...");
                 let finalDocId = docId;
                 
                 // If docId not passed or empty, try multiple methods to get it
                 if (!finalDocId) {
-                    console.log("No docId passed, trying multiple methods to get it...");
                     
                     // Method 1: From protyle object (if available)
                     if (protyle) {
-                        console.log("Method 1: Getting docId from protyle object");
                         if (protyle.block?.rootID) {
                             finalDocId = protyle.block.rootID;
                         } else if (protyle.rootID) {
@@ -514,7 +481,6 @@ export default class PluginSample extends Plugin {
                     
                     // Method 2: From active editor element
                     if (!finalDocId) {
-                        console.log("Method 2: Getting docId from active editor");
                         const activeEditor = document.querySelector(".protyle-wysiwyg");
                         if (activeEditor) {
                             // Check all possible attributes for document ID
@@ -522,7 +488,6 @@ export default class PluginSample extends Plugin {
                             for (const attr of possibleAttributes) {
                                 const value = activeEditor.getAttribute(attr);
                                 if (value) {
-                                    console.log(`Found ID in ${attr}: ${value}`);
                                     finalDocId = value;
                                     break;
                                 }
@@ -531,21 +496,17 @@ export default class PluginSample extends Plugin {
                     }
                 }
                 
-                console.log("Final document ID:", finalDocId);
                 
                 if (finalDocId) {
                     await this.insertToSubdocument(finalDocId, selectedText, content, protyle);
-                    console.log("Insert to subdocument completed");
                 } else {
                     console.error("No document ID found after all methods");
                     showMessage(this.i18n.requestFailed);
                 }
             } else {
-                console.log("Inserting to current document...");
                 if (protyle) {
                     this.insertContent(protyle, content);
                     showMessage(this.i18n.contentInserted);
-                    console.log("Insert to current document completed");
                 } else {
                     console.error("No protyle found for current document insertion");
                     // Try fallback method for inserting to current document
@@ -570,7 +531,6 @@ export default class PluginSample extends Plugin {
                             selection.addRange(range);
                             
                             showMessage(this.i18n.contentInserted);
-                            console.log("Insert to current document completed (fallback method)");
                         } else {
                             showMessage(this.i18n.requestFailed);
                             console.error("No selection found for fallback insertion");
@@ -586,30 +546,71 @@ export default class PluginSample extends Plugin {
             showMessage(this.i18n.requestFailed);
         }
         
-        console.log("=== handleMenuClick end ===");
     }
     
-    private formatResponse(data: any, menu: MenuConfig): string {
+    private formatResponse(data: any, menu: MenuConfig, selectedText: string): string {
         const escapeHtml = (text: string): string => {
             const div = document.createElement("div");
             div.textContent = text;
             return div.innerHTML;
         };
         
+        // Function to get value from nested object/array using path notation like a.b.c or a.b[0].c
+        const getValueByPath = (obj: any, path: string): any => {
+            if (obj === null || obj === undefined) return undefined;
+            
+            // Split path into segments, handling both dot notation and bracket notation
+            const segments = path.split(/(?<!\\)\.|(?<!\\)\[(.*?)(?<!\\)\]/g)
+                .filter(segment => segment && segment !== "[")
+                .map(segment => segment.replace(/^['"]|['"]$/g, '')); // Remove quotes from array indices
+            
+            let current = obj;
+            for (const segment of segments) {
+                if (current === null || current === undefined) return undefined;
+                
+                // Handle array index access
+                if (!isNaN(Number(segment))) {
+                    const index = Number(segment);
+                    if (Array.isArray(current) && index >= 0 && index < current.length) {
+                        current = current[index];
+                    } else {
+                        return undefined;
+                    }
+                } else {
+                    // Handle object property access
+                    if (typeof current === "object" && segment in current) {
+                        current = current[segment];
+                    } else {
+                        return undefined;
+                    }
+                }
+            }
+            return current;
+        };
+        
         if (menu.template) {
             try {
-                let rendered = menu.template.replace(/\$\{(\w+)\}/g, (match, key) => {
-                    if (key === "data") {
+                // Updated regex to match more complex paths including dots and brackets
+                let rendered = menu.template.replace(/\$\{([^}]+)\}/g, (match, path) => {
+                    path = path.trim();
+                    
+                    if (path === "data") {
                         const dataStr = typeof data === "object" ? JSON.stringify(data, null, 2) : String(data);
                         return `<span class="plugin-click2fill__hover-link" title="${escapeHtml(dataStr)}">${escapeHtml(dataStr)}</span>`;
+                    } else if (path === "selectText") {
+                        return `<span class="plugin-click2fill__hover-link" title="${escapeHtml(selectedText)}">${escapeHtml(selectedText)}</span>`;
                     }
-                    const value = data[key] !== undefined ? data[key] : match;
-                    return `<span class="plugin-click2fill__hover-link" title="${escapeHtml(String(value))}">${escapeHtml(String(value))}</span>`;
+                    
+                    const value = getValueByPath(data, path);
+                    return value !== undefined ? 
+                        `<span class="plugin-click2fill__hover-link" title="${escapeHtml(String(value))}">${escapeHtml(String(value))}</span>` : 
+                        match;
                 });
                 rendered = rendered.replace(/\\n/g, "\n");
                 return rendered;
             } catch (error) {
                 // Template rendering failed, fallback to default formatting
+                console.error("Template rendering error:", error);
             }
         }
         
@@ -651,11 +652,6 @@ export default class PluginSample extends Plugin {
     }
     
     private async insertToSubdocument(currentDocId: string, selectedText: string, content: string, protyle?: Proactwrite) {
-        console.log("=== insertToSubdocument start ===");
-        console.log("Current doc ID:", currentDocId);
-        console.log("Selected text:", selectedText);
-        console.log("Content:", content);
-        console.log("Protyle:", protyle);
         
         try {
             // Get document info to get notebook ID and path
@@ -664,7 +660,6 @@ export default class PluginSample extends Plugin {
                 mode: 0,
                 size: 1
             });
-            console.log("Document info:", docInfo);
             
             if (!docInfo || !docInfo.box) {
                 console.error("Invalid document info, missing box:", docInfo);
@@ -673,11 +668,17 @@ export default class PluginSample extends Plugin {
             }
             
             const notebookId = docInfo.box;
-            console.log("Notebook ID:", notebookId);
             
             // Get parent document path to create subdocument in the same directory
-            const parentPath = docInfo.path ? docInfo.path.substring(0, docInfo.path.lastIndexOf(".sy")) : "";
-            console.log("Parent document path:", parentPath);
+            let parentPath = docInfo.path ? docInfo.path.substring(0, docInfo.path.lastIndexOf(".sy")) : "";
+            
+            // Check if current document is a "配套知识" document
+            let designDocPath = parentPath;
+            if (docInfo.name && docInfo.name.startsWith("配套知识：")) {
+                // Get the parent directory of the current "配套知识" document
+                // This should be the design document's directory
+                designDocPath = parentPath;
+            }
             
             // Generate a unique ID for the subdocument in SiYuan format: YYYYMMDDHHmmss-randomstring
             const now = new Date();
@@ -687,11 +688,9 @@ export default class PluginSample extends Plugin {
             const subdocId = `${dateStr}${timeStr}-${randomStr}`;
             
             // Create subdocument title and path
+            // All "配套知识" documents should be in the design document's directory
             const subdocTitle = `配套知识：${selectedText}`;
-            const subdocPath = `${parentPath}/${subdocId}.sy`;
-            console.log("Subdoc title:", subdocTitle);
-            console.log("Subdoc ID:", subdocId);
-            console.log("Subdoc path:", subdocPath);
+            const subdocPath = `${designDocPath}/${subdocId}.sy`;
             
             // Create subdocument with markdown content
             const createdSubdoc = await this.fetchPost("/api/filetree/createDoc", {
@@ -701,7 +700,6 @@ export default class PluginSample extends Plugin {
                 md: `# ${subdocTitle}\n\n${content}`
             });
             
-            console.log("Created subdocument:", createdSubdoc);
             
             // Wait a moment for the subdocument to be fully created and indexed
             await new Promise(resolve => setTimeout(resolve, 500));
@@ -717,7 +715,6 @@ export default class PluginSample extends Plugin {
                 reqId: Date.now()
             });
             
-            console.log("Search ref block result:", searchResult);
             
             // Find the exact block we want to reference
             let refBlockId = "";
@@ -732,7 +729,6 @@ export default class PluginSample extends Plugin {
             // If search didn't find the block, use the subdocument ID as fallback
             if (!refBlockId) {
                 refBlockId = subdocId;
-                console.log("Using subdocument ID as fallback ref block ID:", refBlockId);
             }
             
             // Step 2: Get current selection and block info
@@ -773,7 +769,6 @@ export default class PluginSample extends Plugin {
             
             // Step 3: Get current block content for undo operation
             const currentBlockContent = blockElement.outerHTML;
-            console.log("Current block content:", currentBlockContent);
             
             // Step 4: Create new block content with the reference span
             // Format: <span data-type="block-ref" data-id="refBlockId" data-subtype="s">selectedText</span>
@@ -781,7 +776,6 @@ export default class PluginSample extends Plugin {
                 new RegExp(selectedText, "g"),
                 `<span data-type="block-ref" data-id="${refBlockId}" data-subtype="s">${selectedText}</span>`
             );
-            console.log("New block content:", newContent);
             
             // Step 5: Use transactions API to update the block
             // This is the key step that SiYuan uses internally to create references
@@ -804,10 +798,8 @@ export default class PluginSample extends Plugin {
                 reqId: Date.now()
             });
             
-            console.log("Transaction result:", transactionResult);
             
             if (transactionResult?.success) {
-                console.log("Selected text replaced with reference block successfully");
                 showMessage(this.i18n.contentInsertedToSubdoc);
             } else {
                 console.error("Transaction failed, using fallback method");
@@ -821,13 +813,11 @@ export default class PluginSample extends Plugin {
                 this.replaceSelectionWithLink(refLink);
             }
             
-            console.log("Subdocument insertion completed successfully");
         } catch (error) {
             console.error("Error in insertToSubdocument:", error);
             showMessage(this.i18n.requestFailed);
         }
         
-        console.log("=== insertToSubdocument end ===");
     }
     
     private replaceSelectionWithLink(link: string) {
@@ -881,7 +871,6 @@ export default class PluginSample extends Plugin {
                 });
                 activeEditor.dispatchEvent(keyupEvent);
                 
-                console.log("Link inserted and editor updated");
             }
         } catch (error) {
             console.error("Failed to replace selection with link:", error);
@@ -909,7 +898,6 @@ export default class PluginSample extends Plugin {
         if (blockElement && (blockElement as HTMLElement).hasAttribute("data-node-id")) {
             const blockId = (blockElement as HTMLElement).getAttribute("data-node-id");
             if (blockId) {
-                console.log("Using block ID for fallback replacement:", blockId);
                 // Use SiYuan API to update the block content
                 this.updateBlockContent(blockId, link).catch(error => {
                     console.error("Failed to update block content:", error);
@@ -973,7 +961,6 @@ export default class PluginSample extends Plugin {
                 dataType: "markdown",
                 data: content
             });
-            console.log("Block content updated successfully:", response);
             return response;
         } catch (error) {
             console.error("Failed to update block content:", error);
@@ -982,9 +969,6 @@ export default class PluginSample extends Plugin {
     }
     
     private async appendContentToDocument(docId: string, content: string) {
-        console.log("=== appendContentToDocument start ===");
-        console.log("Doc ID:", docId);
-        console.log("Content:", content);
         
         try {
             await this.fetchPost("/api/block/appendBlock", {
@@ -992,19 +976,14 @@ export default class PluginSample extends Plugin {
                 dataType: "markdown",
                 data: content
             });
-            console.log("Content appended successfully");
         } catch (error) {
             console.error("Error in appendContentToDocument:", error);
             throw new Error("Failed to append content to document");
         }
         
-        console.log("=== appendContentToDocument end ===");
     }
     
     private async fetchPost(url: string, data: any): Promise<any> {
-        console.log("=== fetchPost start ===");
-        console.log("URL:", url);
-        console.log("Data:", data);
         
         try {
             const response = await fetch(url, {
@@ -1015,23 +994,18 @@ export default class PluginSample extends Plugin {
                 body: JSON.stringify(data)
             });
             
-            console.log("Response status:", response.status);
-            console.log("Response ok:", response.ok);
             
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
             
             const result = await response.json();
-            console.log("Response result:", result);
             
             // Check if response has a data property (Siyuan API format)
             if (result && result.code === 0 && result.data !== undefined) {
-                console.log("Returning result.data:", result.data);
                 return result.data;
             }
             
-            console.log("=== fetchPost end ===");
             return result;
         } catch (error) {
             console.error("Error in fetchPost:", error);
@@ -1244,7 +1218,8 @@ export default class PluginSample extends Plugin {
                     </div>
                     <div class="plugin-click2fill__form-item">
                         <label>${this.i18n.menuTemplate}</label>
-                        <textarea id="plugin-click2fill__menu-template" class="b3-text-field fn__block" rows="3">${menu?.template || "${data}"}</textarea>
+                        <textarea id="plugin-click2fill__menu-template" class="b3-text-field fn__block" rows="3" placeholder="支持 ${selectText} 和 ${data} 变量，例如：${selectText} ${data} 或 ${data} ${selectText} 或仅 ${data}">${menu?.template || "${data}"}</textarea>
+                        <div class="plugin-click2fill__form-hint">支持 ${selectText} 和 ${data} 变量，可自定义拼接方式</div>
                     </div>
                     <details class="plugin-click2fill__advanced-section">
                         <summary class="plugin-click2fill__advanced-toggle">高级设置</summary>
