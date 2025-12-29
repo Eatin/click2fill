@@ -417,7 +417,7 @@ export default class PluginSample extends Plugin {
             }
         }
         
-        // Method 4: From protyle root element
+        // Method 4: From protyle root element (including data-id attribute)
         const protyleRoot = document.querySelector(".protyle");
         console.log("4. Checking protyle root:", {
             found: !!protyleRoot,
@@ -425,7 +425,8 @@ export default class PluginSample extends Plugin {
         });
         
         if (protyleRoot) {
-            docId = protyleRoot.getAttribute("data-root-id") || protyleRoot.getAttribute("data-node-id");
+            // Try data-root-id, data-node-id, and data-id attributes
+            docId = protyleRoot.getAttribute("data-root-id") || protyleRoot.getAttribute("data-node-id") || protyleRoot.getAttribute("data-id");
             if (docId) {
                 console.log("✓ Found docId from protyle root:", docId);
                 return docId;
@@ -485,20 +486,8 @@ export default class PluginSample extends Plugin {
             }
         }
         
-        // Method 7: From API - get recent documents and use the first one
-        try {
-            console.log("7. Getting recent documents from API...");
-            const recentDocs = await this.fetchPost("/api/filetree/getRecentDocs", {
-                num: 5
-            });
-            console.log("  - Recent docs result:", recentDocs);
-            if (recentDocs && Array.isArray(recentDocs) && recentDocs.length > 0) {
-                console.log("✓ Found docId from recent docs:", recentDocs[0].id);
-                return recentDocs[0].id;
-            }
-        } catch (error) {
-            console.error("Failed to get recent docs:", error);
-        }
+        // Method 7: Skip getRecentDocs API call since it returns 404 in this version
+        console.log("7. Skipping getRecentDocs API call (returns 404 in this version)");
         
         // Method 8: From localStorage - check if there's a recent document stored
         try {
