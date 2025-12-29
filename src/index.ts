@@ -769,37 +769,65 @@ export default class PluginSample extends Plugin {
             // Step 5: Use transactions API to update the block
             // This is the key step that SiYuan uses internally to create references
             const sessionId = `session-${Date.now()}`;
-            const transactionResult = await this.fetchPost("/api/transactions", {
-                session: sessionId,
-                app: "click2fill",
-                transactions: [{
-                    doOperations: [{
-                        id: blockId,
-                        data: newContent,
-                        action: "update"
-                    }],
-                    undoOperations: [{
-                        id: blockId,
-                        data: currentBlockContent,
-                        action: "update"
-                    }]
-                }],
-                reqId: Date.now()
+            
+            // Debug: Log transaction parameters
+            console.log("Transaction parameters:", {
+                sessionId,
+                blockId,
+                newContent,
+                currentBlockContent
             });
             
-            
-            if (transactionResult?.success) {
-                showMessage(this.i18n.contentInsertedToSubdoc);
-            } else {
-                console.error("Transaction failed, using fallback method");
-                // Fallback: use the old method with enhanced events
-                const hPathResult = await this.fetchPost("/api/filetree/getHPathByPath", {
-                    notebook: notebookId,
-                    path: subdocPath
+            try {
+                const transactionResult = await this.fetchPost("/api/transactions", {
+                    session: sessionId,
+                    app: "click2fill",
+                    transactions: [{
+                        doOperations: [{
+                            id: blockId,
+                            data: newContent,
+                            action: "update"
+                        }],
+                        undoOperations: [{
+                            id: blockId,
+                            data: currentBlockContent,
+                            action: "update"
+                        }]
+                    }],
+                    reqId: Date.now()
                 });
-                const hPath = hPathResult?.hpath || subdocPath;
-                const refLink = `[[${hPath}|${selectedText}]]`;
-                this.replaceSelectionWithLink(refLink);
+                
+                // Debug: Log transaction result
+                console.log("Transaction result:", transactionResult);
+                
+                if (transactionResult?.success || transactionResult === undefined) {
+                    showMessage(this.i18n.contentInsertedToSubdoc);
+                } else {
+                    console.error("Transaction failed, using fallback method. Result:", transactionResult);
+                    // Fallback: use the old method with enhanced events
+                    const hPathResult = await this.fetchPost("/api/filetree/getHPathByPath", {
+                        notebook: notebookId,
+                        path: subdocPath
+                    });
+                    const hPath = hPathResult?.hpath || subdocPath;
+                    const refLink = `[[${hPath}|${selectedText}]]`;
+                    this.replaceSelectionWithLink(refLink);
+                }
+            } catch (error) {
+                console.error("Transaction API call failed, using fallback method. Error:", error);
+                // Fallback: use the old method with enhanced events
+                try {
+                    const hPathResult = await this.fetchPost("/api/filetree/getHPathByPath", {
+                        notebook: notebookId,
+                        path: subdocPath
+                    });
+                    const hPath = hPathResult?.hpath || subdocPath;
+                    const refLink = `[[${hPath}|${selectedText}]]`;
+                    this.replaceSelectionWithLink(refLink);
+                } catch (fallbackError) {
+                    console.error("Fallback method also failed:", fallbackError);
+                    showMessage(this.i18n.requestFailed);
+                }
             }
             
         } catch (error) {
@@ -816,12 +844,8 @@ export default class PluginSample extends Plugin {
             return;
         }
         
-        // Get the root ID of the current document
-        const rootId = activeEditor.getAttribute("data-node-id") || activeEditor.getAttribute("data-root-id");
-        if (!rootId) {
-            console.error("No root ID found for active editor");
-            return;
-        }
+        // Remove rootId check - it's not essential for the replacement operation
+        // This fixes the "No root ID found for active editor" error
         
         try {
             // Use SiYuan's built-in API to replace selection with link
@@ -1208,7 +1232,7 @@ export default class PluginSample extends Plugin {
                     <div class="plugin-click2fill__form-item">
                         <label>${this.i18n.menuTemplate}</label>
                         <textarea id="plugin-click2fill__menu-template" class="b3-text-field fn__block" rows="3" placeholder="支持 ${selectText} 和 ${data} 变量，例如：${selectText} ${data} 或 ${data} ${selectText} 或仅 ${data}">${menu?.template || "${data}"}</textarea>
-                        <div class="plugin-click2fill__form-hint">支持 ${selectText} 和 ${data} 变量，可自定义拼接方式</div>
+                        <div class="plugin-click2fill__form-hint">支持 ${'selectText'} 和 ${'data'} 变量，可自定义拼接方式</div>
                     </div>
                     <details class="plugin-click2fill__advanced-section">
                         <summary class="plugin-click2fill__advanced-toggle">高级设置</summary>
