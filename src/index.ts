@@ -800,7 +800,18 @@ export default class PluginSample extends Plugin {
                 // Debug: Log transaction result
                 console.log("Transaction result:", transactionResult);
                 
-                if (transactionResult?.success || transactionResult === undefined) {
+                // Check if transaction was successful
+                // API returns an array, so check if it's not empty and no obvious errors
+                let isSuccess = false;
+                if (Array.isArray(transactionResult)) {
+                    // For array results, check if any transaction was successful
+                    isSuccess = transactionResult.length > 0;
+                } else if (transactionResult?.success || transactionResult === undefined) {
+                    // For object results, check success property
+                    isSuccess = true;
+                }
+                
+                if (isSuccess) {
                     showMessage(this.i18n.contentInsertedToSubdoc);
                 } else {
                     console.error("Transaction failed, using fallback method. Result:", transactionResult);
@@ -1231,7 +1242,7 @@ export default class PluginSample extends Plugin {
                     </div>
                     <div class="plugin-click2fill__form-item">
                         <label>${this.i18n.menuTemplate}</label>
-                        <textarea id="plugin-click2fill__menu-template" class="b3-text-field fn__block" rows="3" placeholder="支持 ${selectText} 和 ${data} 变量，例如：${selectText} ${data} 或 ${data} ${selectText} 或仅 ${data}">${menu?.template || "${data}"}</textarea>
+                        <textarea id="plugin-click2fill__menu-template" class="b3-text-field fn__block" rows="3" placeholder="支持 ${'selectText'} 和 ${'data'} 变量，例如：${'selectText'} ${'data'} 或 ${'data'} ${'selectText'} 或仅 ${'data'}">${menu?.template || "${data}"}</textarea>
                         <div class="plugin-click2fill__form-hint">支持 ${'selectText'} 和 ${'data'} 变量，可自定义拼接方式</div>
                     </div>
                     <details class="plugin-click2fill__advanced-section">
