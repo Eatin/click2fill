@@ -590,20 +590,29 @@ export default class PluginSample extends Plugin {
                 size: 1
             });
             
-            if (!docInfo || !docInfo.box) {
-                console.error("Invalid document info, missing box:", docInfo);
+            // Check if API call was successful
+            if (!docInfo || docInfo.code === 1 || !docInfo.data) {
+                console.error("Failed to get document info:", docInfo);
                 showMessage(this.i18n.requestFailed);
                 return;
             }
             
-            const notebookId = docInfo.box;
+            // Use the data object from successful API response
+            const docData = docInfo.data;
+            if (!docData || !docData.box) {
+                console.error("Invalid document info, missing box in data:", docData);
+                showMessage(this.i18n.requestFailed);
+                return;
+            }
+            
+            const notebookId = docData.box;
             
             // Get parent document path to create subdocument in the same directory
-            let parentPath = docInfo.path ? docInfo.path.substring(0, docInfo.path.lastIndexOf(".sy")) : "";
+            let parentPath = docData.path ? docData.path.substring(0, docData.path.lastIndexOf(".sy")) : "";
             
             // Check if current document is a "配套知识" document
             let designDocPath = parentPath;
-            if (docInfo.name && docInfo.name.startsWith("配套知识：")) {
+            if (docData.name && docData.name.startsWith("配套知识：")) {
                 // Get the parent directory of the current "配套知识" document
                 // This should be the design document's directory
                 designDocPath = parentPath;
@@ -1355,31 +1364,5 @@ export default class PluginSample extends Plugin {
         return "menu-" + Date.now() + "-" + Math.floor(Math.random() * 1000);
     }
     
-    /* 自定义设置
-    openSetting() {
-        const dialog = new Dialog({
-            title: this.name,
-            content: `<div class="b3-dialog__content"><textarea class="b3-text-field fn__block" placeholder="readonly text in the menu"></textarea></div>
-<div class="b3-dialog__action">
-    <button class="b3-button b3-button--cancel">${this.i18n.cancel}</button><div class="fn__space"></div>
-    <button class="b3-button b3-button--text">${this.i18n.save}</button>
-</div>`,
-            width: this.isMobile ? "92vw" : "520px",
-        });
-        const inputElement = dialog.element.querySelector("textarea");
-        inputElement.value = this.data[STORAGE_NAME].readonlyText;
-        const btnsElement = dialog.element.querySelectorAll(".b3-button");
-        dialog.bindInput(inputElement, () => {
-            (btnsElement[1] as HTMLButtonElement).click();
-        });
-        inputElement.focus();
-        btnsElement[0].addEventListener("click", () => {
-            dialog.destroy();
-        });
-        btnsElement[1].addEventListener("click", () => {
-            this.saveData(STORAGE_NAME, {readonlyText: inputElement.value});
-            dialog.destroy();
-        });
-    }
-    */
+  
 }
