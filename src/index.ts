@@ -333,45 +333,71 @@ export default class PluginSample extends Plugin {
     }
     
     /**
-     * Get document ID using multiple reliable methods
+     * Get document ID using multiple reliable methods with detailed debug logging
      */
     private async getDocumentId(protyle?: Proactwrite): Promise<string | undefined> {
         let docId;
         
+        console.log("=== Debug: Getting document ID ===");
+        
         // Method 1: From protyle object (most reliable)
+        console.log("1. Checking protyle object:", protyle ? {
+            hasBlock: !!protyle.block,
+            hasBlockRootID: !!protyle.block?.rootID,
+            hasRootID: !!protyle.rootID,
+            hasBlockID: !!protyle.block?.id,
+            hasID: !!protyle.id
+        } : "No protyle object");
+        
         if (protyle) {
             // Try to get document ID from different properties, prioritizing rootID
             if (protyle.block?.rootID) {
+                console.log("✓ Found docId from protyle.block.rootID:", protyle.block.rootID);
                 return protyle.block.rootID;
             } else if (protyle.rootID) {
+                console.log("✓ Found docId from protyle.rootID:", protyle.rootID);
                 return protyle.rootID;
             } else if (protyle.block?.id) {
                 // If we only have block ID, get document ID from API
                 try {
+                    console.log("  - Getting root ID from block ID:", protyle.block.id);
                     const blockInfo = await this.fetchPost("/api/block/getBlockInfo", {
                         id: protyle.block.id
                     });
+                    console.log("  - Block info result:", blockInfo);
                     if (blockInfo && blockInfo.rootID) {
+                        console.log("✓ Found docId from block info:", blockInfo.rootID);
                         return blockInfo.rootID;
                     }
                 } catch (error) {
                     console.error("Failed to get root ID from block ID:", error);
                 }
             } else if (protyle.id) {
+                console.log("✓ Found docId from protyle.id:", protyle.id);
                 return protyle.id;
             }
         }
         
         // Method 2: From active editor element (get root ID specifically)
         const activeEditor = document.querySelector(".protyle-wysiwyg");
+        console.log("2. Checking active editor:", {
+            found: !!activeEditor,
+            attributes: activeEditor ? Array.from(activeEditor.attributes).map(attr => `${attr.name}="${attr.value}"`).join(", ") : ""
+        });
+        
         if (activeEditor) {
             // Prioritize data-root-id for document ID
             docId = activeEditor.getAttribute("data-root-id") || activeEditor.getAttribute("data-node-id");
-            if (docId) return docId;
+            if (docId) {
+                console.log("✓ Found docId from active editor:", docId);
+                return docId;
+            }
         }
         
         // Method 3: From URL hash (for document views)
         const hash = window.location.hash;
+        console.log("3. Checking URL hash:", hash);
+        
         if (hash) {
             // Try different URL patterns for document ID
             const patterns = [
@@ -385,6 +411,7 @@ export default class PluginSample extends Plugin {
             for (const pattern of patterns) {
                 const match = hash.match(pattern);
                 if (match && match[1]) {
+                    console.log("✓ Found docId from URL hash:", match[1]);
                     return match[1];
                 }
             }
@@ -392,9 +419,17 @@ export default class PluginSample extends Plugin {
         
         // Method 4: From protyle root element
         const protyleRoot = document.querySelector(".protyle");
+        console.log("4. Checking protyle root:", {
+            found: !!protyleRoot,
+            attributes: protyleRoot ? Array.from(protyleRoot.attributes).map(attr => `${attr.name}="${attr.value}"`).join(", ") : ""
+        });
+        
         if (protyleRoot) {
             docId = protyleRoot.getAttribute("data-root-id") || protyleRoot.getAttribute("data-node-id");
-            if (docId) return docId;
+            if (docId) {
+                console.log("✓ Found docId from protyle root:", docId);
+                return docId;
+            }
         }
         
         // Method 5: From active tab (get root ID)
@@ -407,9 +442,13 @@ export default class PluginSample extends Plugin {
             ".list-item--active"
         ];
         
+        console.log("5. Checking active tabs...");
         for (const selector of tabSelectors) {
             const activeTab = document.querySelector(selector);
             if (activeTab) {
+                console.log(`  - Found tab with selector ${selector}:`, {
+                    attributes: Array.from(activeTab.attributes).map(attr => `${attr.name}="${attr.value}"`).join(", ")
+                });
                 // Check for root ID attributes first
                 const possibleAttributes = ["data-root-id", "data-node-id", "data-id", "id", "data-path", "data-doc-id"];
                 for (const attr of possibleAttributes) {
@@ -420,9 +459,11 @@ export default class PluginSample extends Plugin {
                             // Extract ID from path like /path/to/doc-id.sy
                             const idMatch = tabId.match(/([a-f0-9-]+)\.sy$/i);
                             if (idMatch && idMatch[1]) {
+                                console.log("✓ Found docId from tab path:", idMatch[1]);
                                 return idMatch[1];
                             }
                         }
+                        console.log(`✓ Found docId from tab ${attr}:`, tabId);
                         return tabId;
                     }
                 }
@@ -430,18 +471,29 @@ export default class PluginSample extends Plugin {
         }
         
         // Method 6: From current active note in sidebar
-        const activeNote = document.querySelector(".file-tree-item--active, .b3-list-item--focus");
+        const activeNote = document.querySelector(".file-tree-item--active, .b3-list-item--focus, .b3-list-item--selected");
+        console.log("6. Checking active note in sidebar:", {
+            found: !!activeNote,
+            attributes: activeNote ? Array.from(activeNote.attributes).map(attr => `${attr.name}="${attr.value}"`).join(", ") : ""
+        });
+        
         if (activeNote) {
             const noteId = activeNote.getAttribute("data-id") || activeNote.getAttribute("data-node-id");
-            if (noteId) return noteId;
+            if (noteId) {
+                console.log("✓ Found docId from active note:", noteId);
+                return noteId;
+            }
         }
         
         // Method 7: From API - get recent documents and use the first one
         try {
+            console.log("7. Getting recent documents from API...");
             const recentDocs = await this.fetchPost("/api/filetree/getRecentDocs", {
-                num: 1
+                num: 5
             });
+            console.log("  - Recent docs result:", recentDocs);
             if (recentDocs && Array.isArray(recentDocs) && recentDocs.length > 0) {
+                console.log("✓ Found docId from recent docs:", recentDocs[0].id);
                 return recentDocs[0].id;
             }
         } catch (error) {
@@ -450,18 +502,74 @@ export default class PluginSample extends Plugin {
         
         // Method 8: From localStorage - check if there's a recent document stored
         try {
-            const recentDoc = localStorage.getItem("recentDoc") || sessionStorage.getItem("currentDocId");
-            if (recentDoc) return recentDoc;
+            const recentDoc = localStorage.getItem("recentDoc") || sessionStorage.getItem("currentDocId") || localStorage.getItem("lastOpenDoc") || sessionStorage.getItem("activeDoc");
+            console.log("8. Checking storage for recent doc:", {
+                recentDoc: localStorage.getItem("recentDoc"),
+                currentDocId: sessionStorage.getItem("currentDocId"),
+                lastOpenDoc: localStorage.getItem("lastOpenDoc"),
+                activeDoc: sessionStorage.getItem("activeDoc")
+            });
+            if (recentDoc) {
+                console.log("✓ Found docId from storage:", recentDoc);
+                return recentDoc;
+            }
         } catch (error) {
             console.error("Failed to get doc from storage:", error);
         }
         
         // Method 9: From any block with rootID attribute
-        const blockWithRoot = document.querySelector("[rootid], [data-rootid]");
+        const blockWithRoot = document.querySelector("[rootid], [data-rootid], [data-node-id]");
+        console.log("9. Checking any block with rootID attribute:", {
+            found: !!blockWithRoot,
+            attributes: blockWithRoot ? Array.from(blockWithRoot.attributes).map(attr => `${attr.name}="${attr.value}"`).join(", ") : ""
+        });
+        
         if (blockWithRoot) {
-            return blockWithRoot.getAttribute("rootid") || blockWithRoot.getAttribute("data-rootid");
+            const rootId = blockWithRoot.getAttribute("rootid") || blockWithRoot.getAttribute("data-rootid") || blockWithRoot.getAttribute("data-node-id");
+            if (rootId) {
+                console.log("✓ Found docId from block attribute:", rootId);
+                return rootId;
+            }
         }
         
+        // Method 10: Get all blocks and find the first one with data-node-id
+        console.log("10. Checking all blocks for data-node-id...");
+        const allBlocks = document.querySelectorAll("[data-node-id]");
+        console.log(`  - Found ${allBlocks.length} blocks with data-node-id`);
+        if (allBlocks.length > 0) {
+            const firstBlock = allBlocks[0] as HTMLElement;
+            const blockId = firstBlock.getAttribute("data-node-id");
+            if (blockId) {
+                // Try to get document ID from this block
+                try {
+                    console.log("  - Getting root ID from first block:", blockId);
+                    const blockInfo = await this.fetchPost("/api/block/getBlockInfo", {
+                        id: blockId
+                    });
+                    console.log("  - Block info result:", blockInfo);
+                    if (blockInfo && blockInfo.rootID) {
+                        console.log("✓ Found docId from first block:", blockInfo.rootID);
+                        return blockInfo.rootID;
+                    }
+                } catch (error) {
+                    console.error("Failed to get root ID from first block:", error);
+                }
+            }
+        }
+        
+        // Method 11: Get all editor elements and check their attributes
+        console.log("11. Checking all editor elements...");
+        const allEditors = document.querySelectorAll(".protyle-wysiwyg");
+        console.log(`  - Found ${allEditors.length} editor elements`);
+        for (const editor of Array.from(allEditors)) {
+            const editorRootId = editor.getAttribute("data-root-id") || editor.getAttribute("data-node-id");
+            if (editorRootId) {
+                console.log("✓ Found docId from editor element:", editorRootId);
+                return editorRootId;
+            }
+        }
+        
+        console.log("❌ No document ID found after all methods");
         return undefined;
     }
     
