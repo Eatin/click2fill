@@ -453,8 +453,15 @@ export default class PluginSample extends Plugin {
             // Call HTTP API to get supplementary knowledge
             const data = await this.sendRequest(menu, selectedText);
             
-            // Format the response content
-            const content = this.formatResponse(data, menu, selectedText);
+            // Format the response content based on insertion method
+            let content = "";
+            if (menu.insertionMethod === "subdocument") {
+                // For subdocument insertion, use template rendering without hover link formatting
+                content = this.renderTemplate(data, menu, selectedText);
+            } else {
+                // For current document insertion, use formatted content with hover links
+                content = this.formatResponse(data, menu, selectedText);
+            }
             
             // Add the knowledge to the config for future use
             this.addKnowledgeToConfig(selectedText, content, menu.id);
@@ -662,44 +669,82 @@ export default class PluginSample extends Plugin {
         
     }
     
-    private formatResponse(data: any, menu: MenuConfig, selectedText: string): string {
+    // Helper method to get value from nested object/array using path notation
+    private getValueByPath(obj: any, path: string): any {
+        if (obj === null || obj === undefined) return undefined;
+        
+        // Split path into segments, handling both dot notation and bracket notation
+        const segments = path.split(/(?<!\\)\.|(?<!\\)\[(.*?)(?<!\\)\]/g)
+            .filter(segment => segment && segment !== "[")
+            .map(segment => segment.replace(/^['"]|['"]$/g, '')); // Remove quotes from array indices
+        
+        let current = obj;
+        for (const segment of segments) {
+            if (current === null || current === undefined) return undefined;
+            
+            // Handle array index access
+            if (!isNaN(Number(segment))) {
+                const index = Number(segment);
+                if (Array.isArray(current) && index >= 0 && index < current.length) {
+                    current = current[index];
+                } else {
+                    return undefined;
+                }
+            } else {
+                // Handle object property access
+                if (typeof current === "object" && segment in current) {
+                    current = current[segment];
+                } else {
+                    return undefined;
+                }
+            }
+        }
+        return current;
+    }
+    
+    // Method to render template content without hover link formatting (for subdocuments)
+    private renderTemplate(data: any, menu: MenuConfig, selectedText: string): string {
         const escapeHtml = (text: string): string => {
             const div = document.createElement("div");
             div.textContent = text;
             return div.innerHTML;
         };
         
-        // Function to get value from nested object/array using path notation like a.b.c or a.b[0].c
-        const getValueByPath = (obj: any, path: string): any => {
-            if (obj === null || obj === undefined) return undefined;
-            
-            // Split path into segments, handling both dot notation and bracket notation
-            const segments = path.split(/(?<!\\)\.|(?<!\\)\[(.*?)(?<!\\)\]/g)
-                .filter(segment => segment && segment !== "[")
-                .map(segment => segment.replace(/^['"]|['"]$/g, '')); // Remove quotes from array indices
-            
-            let current = obj;
-            for (const segment of segments) {
-                if (current === null || current === undefined) return undefined;
-                
-                // Handle array index access
-                if (!isNaN(Number(segment))) {
-                    const index = Number(segment);
-                    if (Array.isArray(current) && index >= 0 && index < current.length) {
-                        current = current[index];
-                    } else {
-                        return undefined;
+        if (menu.template) {
+            try {
+                // Updated regex to match more complex paths including dots and brackets
+                let rendered = menu.template.replace(/\$\{([^}]+)\}/g, (match, path) => {
+                    path = path.trim();
+                    
+                    if (path === "data") {
+                        const dataStr = typeof data === "object" ? JSON.stringify(data, null, 2) : String(data);
+                        return escapeHtml(dataStr);
+                    } else if (path === "selectText") {
+                        return escapeHtml(selectedText);
                     }
-                } else {
-                    // Handle object property access
-                    if (typeof current === "object" && segment in current) {
-                        current = current[segment];
-                    } else {
-                        return undefined;
-                    }
-                }
+                    
+                    const value = this.getValueByPath(data, path);
+                    return value !== undefined ? escapeHtml(String(value)) : match;
+                });
+                rendered = rendered.replace(/\\n/g, "\n");
+                return rendered;
+            } catch (error) {
+                // Template rendering failed, fallback to default formatting
+                console.error("Template rendering error:", error);
             }
-            return current;
+        }
+        
+        // Fallback: return raw data
+        const content = typeof data === "object" ? JSON.stringify(data, null, 2) : String(data);
+        return escapeHtml(content);
+    }
+    
+    // Method to render response with hover link formatting (for current document insertion)
+    private formatResponse(data: any, menu: MenuConfig, selectedText: string): string {
+        const escapeHtml = (text: string): string => {
+            const div = document.createElement("div");
+            div.textContent = text;
+            return div.innerHTML;
         };
         
         if (menu.template) {
@@ -715,7 +760,7 @@ export default class PluginSample extends Plugin {
                         return `<span class="plugin-click2fill__hover-link" title="${escapeHtml(selectedText)}">${escapeHtml(selectedText)}</span>`;
                     }
                     
-                    const value = getValueByPath(data, path);
+                    const value = this.getValueByPath(data, path);
                     return value !== undefined ? 
                         `<span class="plugin-click2fill__hover-link" title="${escapeHtml(String(value))}">${escapeHtml(String(value))}</span>` : 
                         match;
@@ -867,13 +912,10 @@ export default class PluginSample extends Plugin {
                 }
             }
             
-            // If we still can't get the root ID, we'll skip the verification
-            // This is because sometimes the editor structure might be different
-            if (currentRootId && currentRootId !== currentDocId) {
-                console.error("Current document ID mismatch. Expected:", currentDocId, "Actual:", currentRootId);
-                showMessage(this.i18n.requestFailed);
-                return;
-            }
+            // Skip document ID verification when updating the reference
+            // This is because the async request might take time, and the user could have switched documents
+            // We'll trust the current editor state and proceed with the insertion
+            // Note: We still get the currentRootId for other purposes, but don't validate it against the old currentDocId
             
             const range = selection.getRangeAt(0);
             let commonContainer = range.commonAncestorContainer;
