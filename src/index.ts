@@ -930,13 +930,20 @@ export default class PluginSample extends Plugin {
             
             // Use SiYuan API to update the block content as markdown
             // This ensures the editor properly parses and renders the block reference
-            const updateResult = await this.fetchPost("/api/block/updateBlock", {
-                id: blockId,
-                dataType: "markdown",
-                data: updatedText
-            });
+            let updateSuccess = false;
+            try {
+                // fetchPost returns result.data when code === 0
+                await this.fetchPost("/api/block/updateBlock", {
+                    id: blockId,
+                    dataType: "markdown",
+                    data: updatedText
+                });
+                updateSuccess = true;
+            } catch (error) {
+                console.error("Failed to update block content, using fallback method:", error);
+            }
             
-            if (updateResult?.code === 0) {
+            if (updateSuccess) {
                 showMessage(this.i18n.contentInsertedToSubdoc);
             } else {
                 console.error("Failed to update block content, using fallback method");
