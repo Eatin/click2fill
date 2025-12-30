@@ -916,39 +916,115 @@ export default class PluginSample extends Plugin {
                 return;
             }
             
-            // Step 3: Get current block content for undo operation
-            // Get the current block's text content
-            const currentBlockText = blockElement.textContent || "";
-            
             // Create markdown block reference format directly
             // This is the most reliable way to ensure proper rendering
             const refLink = `[[#${subdocId}|${selectedText}]]`;
-            const updatedText = currentBlockText.replace(
-                new RegExp(selectedText, "g"),
-                refLink
-            );
             
-            // Use SiYuan API to update the block content as markdown
-            // This ensures the editor properly parses and renders the block reference
-            let updateSuccess = false;
+            // Step 1: First try to use the selection directly
+            // This is the most accurate way to replace only the selected text
+            if (selection && selection.rangeCount > 0) {
+                const range = selection.getRangeAt(0);
+                
+                // Only proceed if the selection is within the current block
+                if (blockElement.contains(range.commonAncestorContainer)) {
+                    // Delete the selected text and insert the refLink
+                    range.deleteContents();
+                    const linkText = document.createTextNode(refLink);
+                    range.insertNode(linkText);
+                    
+                    // Move cursor to end of inserted text
+                    range.setStartAfter(linkText);
+                    range.collapse(true);
+                    selection.removeAllRanges();
+                    selection.addRange(range);
+                    
+                    // Trigger input event to ensure editor re-parses the content
+                    const inputEvent = new InputEvent("input", {
+                        bubbles: true,
+                        cancelable: true,
+                        composed: true
+                    });
+                    blockElement.dispatchEvent(inputEvent);
+                    
+                    showMessage(this.i18n.contentInsertedToSubdoc);
+                    return;
+                }
+            }
+            
+            // Step 2: If selection-based replacement fails, try API-based approach
+            // Get the current block's innerHTML to preserve formatting
+            const currentBlockHTML = blockElement.innerHTML;
+            
+            // Create a temporary div to parse the HTML
+            const tempDiv = document.createElement("div");
+            tempDiv.innerHTML = currentBlockHTML;
+            
+            // Find the first text node that contains the selected text
+            let foundTextNode = null;
+            let textOffset = 0;
+            
+            const findTextNode = (node: Node) => {
+                if (node.nodeType === Node.TEXT_NODE) {
+                    const text = node.textContent || "";
+                    const index = text.indexOf(selectedText);
+                    if (index !== -1) {
+                        foundTextNode = node;
+                        textOffset = index;
+                        return true;
+                    }
+                }
+                for (const child of node.childNodes) {
+                    if (findTextNode(child)) {
+                        return true;
+                    }
+                }
+                return false;
+            };
+            
+            findTextNode(tempDiv);
+            
+            if (foundTextNode) {
+                // Replace only the first occurrence of the selected text
+                const text = foundTextNode.textContent || "";
+                const newText = text.replace(selectedText, refLink);
+                foundTextNode.textContent = newText;
+                
+                // Update the block with the modified HTML
+                let updateSuccess = false;
+                try {
+                    await this.fetchPost("/api/block/updateBlock", {
+                        id: blockId,
+                        dataType: "html",
+                        data: tempDiv.innerHTML
+                    });
+                    updateSuccess = true;
+                } catch (error) {
+                    console.error("Failed to update block content, using fallback method:", error);
+                }
+                
+                if (updateSuccess) {
+                    showMessage(this.i18n.contentInsertedToSubdoc);
+                    return;
+                }
+            }
+            
+            // Step 3: Ultimate fallback - use the previous markdown-based approach
+            console.error("All replacement methods failed, using ultimate fallback");
+            // Get the current block's text content
+            const currentBlockText = blockElement.textContent || "";
+            // Replace only the first occurrence of the selected text
+            const updatedText = currentBlockText.replace(selectedText, refLink);
+            
             try {
-                // fetchPost returns result.data when code === 0
                 await this.fetchPost("/api/block/updateBlock", {
                     id: blockId,
                     dataType: "markdown",
                     data: updatedText
                 });
-                updateSuccess = true;
-            } catch (error) {
-                console.error("Failed to update block content, using fallback method:", error);
-            }
-            
-            if (updateSuccess) {
                 showMessage(this.i18n.contentInsertedToSubdoc);
-            } else {
-                console.error("Failed to update block content, using fallback method");
-                // Ultimate fallback: use selection replacement
-                this.replaceSelectionWithLink(refLink);
+            } catch (error) {
+                console.error("Failed to update block content with ultimate fallback:", error);
+                showMessage(this.i18n.requestFailed);
             }
             
         } catch (error) {
