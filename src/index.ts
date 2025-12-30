@@ -917,44 +917,30 @@ export default class PluginSample extends Plugin {
             }
             
             // Step 3: Get current block content for undo operation
-            const currentBlockContent = blockElement.outerHTML;
+            // Get the current block's text content
+            const currentBlockText = blockElement.textContent || "";
             
-            // Step 4: Create new block content with the reference span
-            // Format: <span data-type="block-ref" data-id="refBlockId" data-subtype="s">selectedText</span>
-            const newContent = currentBlockContent.replace(
+            // Create markdown block reference format directly
+            // This is the most reliable way to ensure proper rendering
+            const refLink = `[[#${subdocId}|${selectedText}]]`;
+            const updatedText = currentBlockText.replace(
                 new RegExp(selectedText, "g"),
-                `<span data-type="block-ref" data-id="${refBlockId}" data-subtype="s">${selectedText}</span>`
+                refLink
             );
             
-            // Step 5: Use transactions API to update the block
-            // This is the key step that SiYuan uses internally to create references
-            const sessionId = `session-${Date.now()}`;
-            const transactionResult = await this.fetchPost("/api/transactions", {
-                session: sessionId,
-                app: "click2fill",
-                transactions: [{
-                    doOperations: [{
-                        id: blockId,
-                        data: newContent,
-                        action: "update"
-                    }],
-                    undoOperations: [{
-                        id: blockId,
-                        data: currentBlockContent,
-                        action: "update"
-                    }]
-                }],
-                reqId: Date.now()
+            // Use SiYuan API to update the block content as markdown
+            // This ensures the editor properly parses and renders the block reference
+            const updateResult = await this.fetchPost("/api/block/updateBlock", {
+                id: blockId,
+                dataType: "markdown",
+                data: updatedText
             });
             
-            
-            if (transactionResult?.success) {
+            if (updateResult?.code === 0) {
                 showMessage(this.i18n.contentInsertedToSubdoc);
             } else {
-                console.error("Transaction failed, using fallback method");
-                // Fallback: use the block ref syntax directly with the subdocument ID
-                // This ensures we get a valid reference even when other methods fail
-                const refLink = `[[#${subdocId}|${selectedText}]]`;
+                console.error("Failed to update block content, using fallback method");
+                // Ultimate fallback: use selection replacement
                 this.replaceSelectionWithLink(refLink);
             }
             
