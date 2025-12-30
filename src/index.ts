@@ -916,115 +916,96 @@ export default class PluginSample extends Plugin {
                 return;
             }
             
-            // Create markdown block reference format directly
+            // Create proper HTML block reference format for SiYuan
             // This is the most reliable way to ensure proper rendering
-            const refLink = `[[#${subdocId}|${selectedText}]]`;
+            const refLink = `<span data-type="block-ref" data-id="${subdocId}" data-subtype="s">${selectedText}</span>`;
             
-            // Step 1: First try to use the selection directly
-            // This is the most accurate way to replace only the selected text
-            if (selection && selection.rangeCount > 0) {
-                const range = selection.getRangeAt(0);
-                
-                // Only proceed if the selection is within the current block
-                if (blockElement.contains(range.commonAncestorContainer)) {
-                    // Delete the selected text and insert the refLink
-                    range.deleteContents();
-                    const linkText = document.createTextNode(refLink);
-                    range.insertNode(linkText);
-                    
-                    // Move cursor to end of inserted text
-                    range.setStartAfter(linkText);
-                    range.collapse(true);
-                    selection.removeAllRanges();
-                    selection.addRange(range);
-                    
-                    // Trigger input event to ensure editor re-parses the content
-                    const inputEvent = new InputEvent("input", {
-                        bubbles: true,
-                        cancelable: true,
-                        composed: true
-                    });
-                    blockElement.dispatchEvent(inputEvent);
-                    
-                    showMessage(this.i18n.contentInsertedToSubdoc);
-                    return;
-                }
+            // Step 1: Use the transaction API to update the block with proper HTML block reference
+            // This is the most reliable way to ensure proper rendering in SiYuan
+            const currentBlockContent = blockElement.outerHTML;
+            
+            // Create new block content with the reference span
+            const newContent = currentBlockContent.replace(
+                new RegExp(selectedText, "g"),
+                refLink
+            );
+            
+            // Use transactions API to update the block - this is the standard way SiYuan handles block updates
+            let updateSuccess = false;
+            try {
+                const sessionId = `session-${Date.now()}`;
+                await this.fetchPost("/api/transactions", {
+                    session: sessionId,
+                    app: "click2fill",
+                    transactions: [{
+                        doOperations: [{
+                            id: blockId,
+                            data: newContent,
+                            action: "update"
+                        }],
+                        undoOperations: [{
+                            id: blockId,
+                            data: currentBlockContent,
+                            action: "update"
+                        }]
+                    }],
+                    reqId: Date.now()
+                });
+                updateSuccess = true;
+            } catch (error) {
+                console.error("Transaction failed, using fallback method:", error);
             }
             
-            // Step 2: If selection-based replacement fails, try API-based approach
-            // Get the current block's innerHTML to preserve formatting
-            const currentBlockHTML = blockElement.innerHTML;
-            
-            // Create a temporary div to parse the HTML
-            const tempDiv = document.createElement("div");
-            tempDiv.innerHTML = currentBlockHTML;
-            
-            // Find the first text node that contains the selected text
-            let foundTextNode = null;
-            let textOffset = 0;
-            
-            const findTextNode = (node: Node) => {
-                if (node.nodeType === Node.TEXT_NODE) {
-                    const text = node.textContent || "";
-                    const index = text.indexOf(selectedText);
-                    if (index !== -1) {
-                        foundTextNode = node;
-                        textOffset = index;
-                        return true;
-                    }
-                }
-                for (const child of node.childNodes) {
-                    if (findTextNode(child)) {
-                        return true;
-                    }
-                }
-                return false;
-            };
-            
-            findTextNode(tempDiv);
-            
-            if (foundTextNode) {
-                // Replace only the first occurrence of the selected text
-                const text = foundTextNode.textContent || "";
-                const newText = text.replace(selectedText, refLink);
-                foundTextNode.textContent = newText;
+            if (updateSuccess) {
+                showMessage(this.i18n.contentInsertedToSubdoc);
+            } else {
+                console.error("Failed to update block content, using fallback method");
+                // Fallback: use simple block reference format ((id))
+                const simpleRefLink = `((${subdocId}))`;
                 
-                // Update the block with the modified HTML
-                let updateSuccess = false;
                 try {
+                    // Try to use the selection directly with simple reference format
+                    if (selection && selection.rangeCount > 0) {
+                        const range = selection.getRangeAt(0);
+                        if (blockElement.contains(range.commonAncestorContainer)) {
+                            // Delete the selected text and insert the simple refLink
+                            range.deleteContents();
+                            const linkText = document.createTextNode(simpleRefLink);
+                            range.insertNode(linkText);
+                            
+                            // Move cursor to end of inserted text
+                            range.setStartAfter(linkText);
+                            range.collapse(true);
+                            selection.removeAllRanges();
+                            selection.addRange(range);
+                            
+                            // Trigger input event to ensure editor re-parses the content
+                            const inputEvent = new InputEvent("input", {
+                                bubbles: true,
+                                cancelable: true,
+                                composed: true
+                            });
+                            blockElement.dispatchEvent(inputEvent);
+                            
+                            showMessage(this.i18n.contentInsertedToSubdoc);
+                            return;
+                        }
+                    }
+                    
+                    // If selection-based replacement fails, try API-based approach with simple format
+                    const currentBlockText = blockElement.textContent || "";
+                    const updatedText = currentBlockText.replace(selectedText, simpleRefLink);
+                    
                     await this.fetchPost("/api/block/updateBlock", {
                         id: blockId,
-                        dataType: "html",
-                        data: tempDiv.innerHTML
+                        dataType: "markdown",
+                        data: updatedText
                     });
-                    updateSuccess = true;
-                } catch (error) {
-                    console.error("Failed to update block content, using fallback method:", error);
-                }
-                
-                if (updateSuccess) {
                     showMessage(this.i18n.contentInsertedToSubdoc);
-                    return;
+                } catch (fallbackError) {
+                    console.error("Failed to update block content with fallback method:", fallbackError);
+                    showMessage(this.i18n.requestFailed);
                 }
-            }
-            
-            // Step 3: Ultimate fallback - use the previous markdown-based approach
-            console.error("All replacement methods failed, using ultimate fallback");
-            // Get the current block's text content
-            const currentBlockText = blockElement.textContent || "";
-            // Replace only the first occurrence of the selected text
-            const updatedText = currentBlockText.replace(selectedText, refLink);
-            
-            try {
-                await this.fetchPost("/api/block/updateBlock", {
-                    id: blockId,
-                    dataType: "markdown",
-                    data: updatedText
-                });
-                showMessage(this.i18n.contentInsertedToSubdoc);
-            } catch (error) {
-                console.error("Failed to update block content with ultimate fallback:", error);
-                showMessage(this.i18n.requestFailed);
             }
             
         } catch (error) {
