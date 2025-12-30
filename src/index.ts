@@ -952,13 +952,9 @@ export default class PluginSample extends Plugin {
                 showMessage(this.i18n.contentInsertedToSubdoc);
             } else {
                 console.error("Transaction failed, using fallback method");
-                // Fallback: use the old method with enhanced events
-                const hPathResult = await this.fetchPost("/api/filetree/getHPathByPath", {
-                    notebook: notebookId,
-                    path: subdocPath
-                });
-                const hPath = hPathResult?.hpath || subdocPath;
-                const refLink = `[[${hPath}|${selectedText}]]`;
+                // Fallback: use the block ref syntax directly with the subdocument ID
+                // This ensures we get a valid reference even when other methods fail
+                const refLink = `[[#${subdocId}|${selectedText}]]`;
                 this.replaceSelectionWithLink(refLink);
             }
             
