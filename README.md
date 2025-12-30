@@ -23,6 +23,9 @@ Click2Fill is a powerful plugin for SiYuan that allows you to select text, send 
 * **Placeholder Support**: Use `${selectText}` in request parameters to include selected text
 * **Default Request Method**: POST method set as default for better compatibility
 * **Simplified Request Methods**: Only GET and POST options for easier configuration
+* **Subdocument Insertion**: Option to insert API responses into newly created "配套知识" (Supplementary Knowledge) subdocuments
+* **Smart Subdocument Rendering**: Template support for subdocuments without duplicate rendering
+* **Robust Reference Association**: Reliable subdocument reference linking even with async delays
 
 ## Installation
 
