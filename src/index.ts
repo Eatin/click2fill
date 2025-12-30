@@ -408,13 +408,13 @@ export default class PluginSample extends Plugin {
         if (matchedMenus.length > 0) {
             matchedMenus.forEach(menuConfig => {
                 menu.addItem({
-                    id: menuConfig.id,
-                    iconHTML: `<svg class="b3-menu__icon"><use xlink:href="#${menuConfig.icon}"></use></svg>`,
-                    label: menuConfig.name,
-                    click: () => {
-                        this.handleMenuClick(protyle, selectedText, menuConfig, docId);
-                    }
-                });
+                        id: menuConfig.id,
+                        iconHTML: `<svg class="b3-menu__icon"><use xlink:href="#${menuConfig.icon}"></use></svg>`,
+                        label: menuConfig.name,
+                        click: () => {
+                            this.handleMenuClick(protyle, selectedText, menuConfig);
+                        }
+                    });
             });
             
             menu.addItem({type: "separator"});
@@ -447,7 +447,7 @@ export default class PluginSample extends Plugin {
         menu.open({x: x, y: y});
     }
     
-    private async handleMenuClick(protyle: Proactwrite, selectedText: string, menu: MenuConfig, docId?: string) {
+    private async handleMenuClick(protyle: Proactwrite, selectedText: string, menu: MenuConfig) {
         
         try {
             // Call HTTP API to get supplementary knowledge
@@ -461,37 +461,143 @@ export default class PluginSample extends Plugin {
             
             // Use the insertion method configured in the menu
             if (menu.insertionMethod === "subdocument") {
-                let finalDocId = docId;
+                let finalDocId = "";
                 
-                // If docId not passed or empty, try multiple methods to get it
+                // Always get the current document ID when menu is clicked
+                // Method 1: From protyle object (if available and fresh)
+                if (protyle) {
+                    if (protyle.block?.rootID) {
+                        finalDocId = protyle.block.rootID;
+                    } else if (protyle.rootID) {
+                        finalDocId = protyle.rootID;
+                    } else if (protyle.block?.id) {
+                        finalDocId = protyle.block.id;
+                    } else if (protyle.id) {
+                        finalDocId = protyle.id;
+                    }
+                }
+                
+                // Method 2: From active window's protyle-background (most reliable, reference syplugin-hierarchyNavigate)
                 if (!finalDocId) {
-                    
-                    // Method 1: From protyle object (if available)
-                    if (protyle) {
-                        if (protyle.block?.rootID) {
-                            finalDocId = protyle.block.rootID;
-                        } else if (protyle.rootID) {
-                            finalDocId = protyle.rootID;
-                        } else if (protyle.block?.id) {
-                            finalDocId = protyle.block.id;
-                        } else if (protyle.id) {
-                            finalDocId = protyle.id;
+                    // Get current active window's protyle-background element
+                    // This is the most reliable way to get the current document ID
+                    const activeProtyleBackground = document.querySelector(".layout__wnd--active .protyle.fn__flex-1:not(.fn__none) .protyle-background");
+                    if (activeProtyleBackground) {
+                        const nodeId = activeProtyleBackground.getAttribute("data-node-id");
+                        if (nodeId) {
+                            finalDocId = nodeId;
                         }
                     }
+                }
+                
+                // Method 3: From active editor element with more specific selector
+                if (!finalDocId) {
+                    const activeEditor = document.querySelector(".layout__wnd--active .protyle-wysiwyg");
+                    if (activeEditor) {
+                        // Check all possible attributes for document ID
+                        const possibleAttributes = ["data-node-id", "data-root-id", "data-block-id", "id"];
+                        for (const attr of possibleAttributes) {
+                            const value = activeEditor.getAttribute(attr);
+                            if (value) {
+                                finalDocId = value;
+                                break;
+                            }
+                        }
+                    }
+                }
+                
+                // Method 4: From URL hash (fallback)
+                if (!finalDocId) {
+                    const hash = window.location.hash;
+                    if (hash) {
+                        // Try different URL patterns
+                        const patterns = [
+                            /^#\/([a-f0-9]{20})$/i, // Original pattern
+                            /^#\/([a-z0-9-]{22})$/i, // Pattern with hyphen
+                            /id=([a-f0-9]{20})/i,    // Query parameter pattern
+                            /node=([a-f0-9]{20})/i   // Another query parameter pattern
+                        ];
+                        for (const pattern of patterns) {
+                            const match = hash.match(pattern);
+                            if (match && match[1]) {
+                                finalDocId = match[1];
+                                break;
+                            }
+                        }
+                    }
+                }
+                
+                // Method 5: From active tab element with more specific selector
+                if (!finalDocId) {
+                    // Try different selectors for active tab
+                    const activeTab = document.querySelector(".layout__wnd--active .tabs__item--active") || 
+                                    document.querySelector(".layout__wnd--active .tab-item.active") ||
+                                    document.querySelector(".layout__wnd--active .protyle-tabs__tab--active") ||
+                                    document.querySelector(".layout__wnd--active .b3-tab--active");
                     
-                    // Method 2: From active editor element
-                    if (!finalDocId) {
-                        const activeEditor = document.querySelector(".protyle-wysiwyg");
-                        if (activeEditor) {
-                            // Check all possible attributes for document ID
-                            const possibleAttributes = ["data-node-id", "data-root-id", "data-block-id", "id"];
-                            for (const attr of possibleAttributes) {
-                                const value = activeEditor.getAttribute(attr);
-                                if (value) {
-                                    finalDocId = value;
-                                    break;
+                    if (activeTab) {
+                        // Check all possible attributes for document ID
+                        const possibleAttributes = ["data-node-id", "data-root-id", "data-block-id", "id", "data-id"];
+                        for (const attr of possibleAttributes) {
+                            const tabId = activeTab.getAttribute(attr);
+                            if (tabId) {
+                                finalDocId = tabId;
+                                break;
+                            }
+                        }
+                    }
+                }
+                
+                // Method 6: From parent elements of the selection with active window context
+                if (!finalDocId) {
+                    const selection = window.getSelection();
+                    if (selection && selection.rangeCount > 0) {
+                        const range = selection.getRangeAt(0);
+                        let commonContainer = range.commonAncestorContainer;
+                        
+                        // Ensure commonContainer is an Element, not a Text node
+                        if (commonContainer.nodeType === Node.TEXT_NODE) {
+                            commonContainer = commonContainer.parentElement;
+                        }
+                        
+                        if (commonContainer && commonContainer.nodeType === Node.ELEMENT_NODE) {
+                            // Check if the selection is within an active window
+                            const activeWindow = commonContainer.closest(".layout__wnd--active");
+                            if (activeWindow) {
+                                // Traverse up the DOM tree to find an element with document ID
+                                let current = commonContainer;
+                                for (let i = 0; i < 10 && current; i++) {
+                                    // Check all possible attributes for document ID
+                                    const possibleAttributes = ["data-node-id", "data-root-id", "data-block-id", "id"];
+                                    for (const attr of possibleAttributes) {
+                                        const nodeId = current.getAttribute(attr);
+                                        if (nodeId) {
+                                            finalDocId = nodeId;
+                                            break;
+                                        }
+                                    }
+                                    if (finalDocId) break;
+                                    current = current.parentElement;
                                 }
                             }
+                        }
+                    }
+                }
+                
+                // Method 7: Fallback to all showing documents (reference syplugin-hierarchyNavigate)
+                if (!finalDocId) {
+                    // Get all showing protyle-background elements
+                    const allProtyleBackgrounds = document.querySelectorAll(".protyle-background:not(.fn__none)");
+                    // Filter to only get visible ones
+                    const visibleProtyleBackgrounds = Array.from(allProtyleBackgrounds).filter(el => {
+                        const rect = el.getBoundingClientRect();
+                        return rect.width > 0 && rect.height > 0;
+                    });
+                    // If only one visible, use it
+                    if (visibleProtyleBackgrounds.length === 1) {
+                        const nodeId = visibleProtyleBackgrounds[0].getAttribute("data-node-id");
+                        if (nodeId) {
+                            finalDocId = nodeId;
                         }
                     }
                 }
@@ -502,6 +608,14 @@ export default class PluginSample extends Plugin {
                 } else {
                     console.error("No document ID found after all methods");
                     showMessage(this.i18n.requestFailed);
+                    
+                    // Debug information
+                    console.log("Debug info for document ID:");
+                    console.log("Protyle object:", protyle ? { hasRootID: !!protyle.rootID, hasBlockID: !!protyle.block?.id } : "No protyle");
+                    console.log("Active editor:", document.querySelector(".protyle-wysiwyg"));
+                    console.log("URL hash:", window.location.hash);
+                    console.log("Active tab:", document.querySelector(".tabs__item--active, .tab-item.active, .protyle-tabs__tab--active, .b3-tab--active"));
+                    console.log("Body attributes:", Array.from(document.body.attributes));
                 }
             } else {
                 if (protyle) {
@@ -672,13 +786,9 @@ export default class PluginSample extends Plugin {
             // Get parent document path to create subdocument in the same directory
             let parentPath = docInfo.path ? docInfo.path.substring(0, docInfo.path.lastIndexOf(".sy")) : "";
             
-            // Check if current document is a "配套知识" document
-            let designDocPath = parentPath;
-            if (docInfo.name && docInfo.name.startsWith("配套知识：")) {
-                // Get the parent directory of the current "配套知识" document
-                // This should be the design document's directory
-                designDocPath = parentPath;
-            }
+            // For all documents, create subdocuments in the same directory
+            // This ensures each document has its own配套知识 documents
+            const designDocPath = parentPath;
             
             // Generate a unique ID for the subdocument in SiYuan format: YYYYMMDDHHmmss-randomstring
             const now = new Date();
@@ -704,37 +814,63 @@ export default class PluginSample extends Plugin {
             // Wait a moment for the subdocument to be fully created and indexed
             await new Promise(resolve => setTimeout(resolve, 500));
             
-            // Step 1: Search for the block in the subdocument using searchRefBlock API
-            const searchResult = await this.fetchPost("/api/search/searchRefBlock", {
-                k: selectedText,
-                id: currentDocId,
-                beforeLen: 16,
-                rootID: docInfo.rootID || currentDocId,
-                isDatabase: false,
-                isSquareBrackets: false,
-                reqId: Date.now()
-            });
-            
-            
-            // Find the exact block we want to reference
-            let refBlockId = "";
-            if (searchResult?.blocks?.length > 0) {
-                // Look for the block in the newly created subdocument
-                const targetBlock = searchResult.blocks.find((block: any) => 
-                    block.id && block.content.includes(selectedText)
-                );
-                refBlockId = targetBlock?.id || "";
-            }
-            
-            // If search didn't find the block, use the subdocument ID as fallback
-            if (!refBlockId) {
-                refBlockId = subdocId;
-            }
+            // Step 1: Directly use the subdocument ID for reference
+            // No need to search - we know the subdocument contains the content
+            let refBlockId = subdocId;
             
             // Step 2: Get current selection and block info
+            // IMPORTANT: Always get the current active editor and selection when inserting
+            // This ensures we're working with the current document, not a stale selection from a previous document
+            const activeEditor = document.querySelector(".protyle-wysiwyg");
+            if (!activeEditor) {
+                console.error("No active editor found");
+                showMessage(this.i18n.requestFailed);
+                return;
+            }
+            
             const selection = window.getSelection();
             if (!selection || selection.rangeCount === 0) {
                 console.error("No selection found");
+                showMessage(this.i18n.requestFailed);
+                return;
+            }
+            
+            // Get current root ID to verify we're working with the same document
+            // Try multiple ways to get the root ID
+            let currentRootId = activeEditor.getAttribute("data-node-id") || activeEditor.getAttribute("data-root-id");
+            
+            // If not found on activeEditor, try to find it from parent elements
+            if (!currentRootId) {
+                let parentElement = activeEditor.parentElement;
+                while (parentElement && !currentRootId) {
+                    currentRootId = parentElement.getAttribute("data-node-id") || parentElement.getAttribute("data-root-id");
+                    parentElement = parentElement.parentElement;
+                }
+            }
+            
+            // If still not found, try to get from nearest protyle element
+            if (!currentRootId) {
+                const protyleElements = document.querySelectorAll('[class*="protyle"]');
+                for (const el of Array.from(protyleElements)) {
+                    currentRootId = el.getAttribute("data-node-id") || el.getAttribute("data-root-id");
+                    if (currentRootId) {
+                        break;
+                    }
+                }
+            }
+            
+            // If still not found, try to get from active tab
+            if (!currentRootId) {
+                const activeTab = document.querySelector(".tabs__item--active, .tab-item.active, .protyle-tabs__tab--active, .b3-tab--active");
+                if (activeTab) {
+                    currentRootId = activeTab.getAttribute("data-node-id") || activeTab.getAttribute("data-root-id") || activeTab.getAttribute("data-id");
+                }
+            }
+            
+            // If we still can't get the root ID, we'll skip the verification
+            // This is because sometimes the editor structure might be different
+            if (currentRootId && currentRootId !== currentDocId) {
+                console.error("Current document ID mismatch. Expected:", currentDocId, "Actual:", currentRootId);
                 showMessage(this.i18n.requestFailed);
                 return;
             }
@@ -751,6 +887,19 @@ export default class PluginSample extends Plugin {
                 console.error("Invalid common container");
                 showMessage(this.i18n.requestFailed);
                 return;
+            }
+            
+            // Ensure the selection is within the current active editor
+            if (!activeEditor.contains(commonContainer)) {
+                console.error("Selection is not within the active editor. This is likely because the document was switched.");
+                // Fallback: get the first paragraph in the current active editor
+                const firstParagraph = activeEditor.querySelector(".p");
+                if (firstParagraph) {
+                    commonContainer = firstParagraph;
+                } else {
+                    showMessage(this.i18n.requestFailed);
+                    return;
+                }
             }
             
             const blockElement = commonContainer.closest(".p") as HTMLElement;
@@ -827,19 +976,38 @@ export default class PluginSample extends Plugin {
             return;
         }
         
-        // Get the root ID of the current document
-        const rootId = activeEditor.getAttribute("data-node-id") || activeEditor.getAttribute("data-root-id");
-        if (!rootId) {
-            console.error("No root ID found for active editor");
-            return;
-        }
-        
         try {
             // Use SiYuan's built-in API to replace selection with link
             // The selection is already handled by the editor, we just need to insert the link text
             const selection = window.getSelection();
             if (selection && selection.rangeCount > 0) {
                 const range = selection.getRangeAt(0);
+                
+                // Check if selection is within the active editor
+                let commonContainer = range.commonAncestorContainer;
+                if (commonContainer.nodeType === Node.TEXT_NODE) {
+                    commonContainer = commonContainer.parentElement;
+                }
+                
+                // If selection is not within the active editor, create a new range at the end of the active editor
+                if (!commonContainer || !activeEditor.contains(commonContainer)) {
+                    console.error("Selection is not within the active editor, creating new range at end of active editor");
+                    // Find the last paragraph in the active editor
+                    const paragraphs = activeEditor.querySelectorAll(".p");
+                    const lastParagraph = paragraphs.length > 0 ? paragraphs[paragraphs.length - 1] : activeEditor;
+                    
+                    // Create a new range at the end of the last paragraph
+                    const newRange = document.createRange();
+                    newRange.selectNodeContents(lastParagraph);
+                    newRange.collapse(false);
+                    
+                    // Update the selection with the new range
+                    selection.removeAllRanges();
+                    selection.addRange(newRange);
+                    
+                    // Use the new range for insertion
+                    range = newRange;
+                }
                 
                 // Delete the selected text
                 range.deleteContents();
@@ -1218,8 +1386,8 @@ export default class PluginSample extends Plugin {
                     </div>
                     <div class="plugin-click2fill__form-item">
                         <label>${this.i18n.menuTemplate}</label>
-                        <textarea id="plugin-click2fill__menu-template" class="b3-text-field fn__block" rows="3" placeholder="支持 ${selectText} 和 ${data} 变量，例如：${selectText} ${data} 或 ${data} ${selectText} 或仅 ${data}">${menu?.template || "${data}"}</textarea>
-                        <div class="plugin-click2fill__form-hint">支持 ${selectText} 和 ${data} 变量，可自定义拼接方式</div>
+                        <textarea id="plugin-click2fill__menu-template" class="b3-text-field fn__block" rows="3" placeholder="支持 ${'${selectText}'} 和 ${'${data}'} 变量，例如：${'${selectText}'} ${'${data}'} 或 ${'${data}'} ${'${selectText}'} 或仅 ${'${data}'}">${menu?.template || "${data}"}</textarea>
+                        <div class="plugin-click2fill__form-hint">支持 ${'${selectText}'} 和 ${'${data}'} 变量，可自定义拼接方式</div>
                     </div>
                     <details class="plugin-click2fill__advanced-section">
                         <summary class="plugin-click2fill__advanced-toggle">高级设置</summary>
