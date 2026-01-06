@@ -23,6 +23,13 @@ Click2Fill is a powerful plugin for SiYuan that allows you to select text, send 
 * **Placeholder Support**: Use `${selectText}` in request parameters to include selected text
 * **Default Request Method**: POST method set as default for better compatibility
 * **Simplified Request Methods**: Only GET and POST options for easier configuration
+* **Default Demo API**: Includes a pre-configured "Random Joke" API for immediate testing
+* **Template Default Values**: Support for `${data.type || 'default'}` syntax in templates
+* **Array Loop Support**: Use `${each(array as item)}` to iterate through arrays in responses
+* **Copy to Clipboard**: Results can be copied to clipboard instead of inserted
+* **History Management**: Saves last 100 API calls for reference
+* **Non-intrusive Startup**: Dialog remains inactive by default for cleaner startup
+* **Clean Console**: Reduced logging for better performance
 
 ## Installation
 

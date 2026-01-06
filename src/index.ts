@@ -1,4 +1,4 @@
-import { Plugin, showMessage, confirm, Dialog, Menu, Proactwrite } from "siyuan";
+import { Plugin, showMessage, Dialog } from "siyuan";
 
 const STORAGE_NAME = "click2fill-config";
 
@@ -29,11 +29,47 @@ interface PluginConfig {
     menus: MenuConfig[];
     defaultMenu: string;
     knowledge: KnowledgeItem[];
+    history: RequestHistory[];
+}
+
+interface RequestHistory {
+    id: string;
+    timestamp: number;
+    selectedText: string;
+    menu: MenuConfig;
+    requestData: any;
+    responseData: any;
+    error: string | null;
+}
+
+interface DialogState {
+    selectedText: string;
+    selectedMenu: MenuConfig | null;
+    requestData: any;
+    responseData: any;
+    step: "send" | "result" | "history";
+    loading: boolean;
+    loadingTime: number;
+    error: string | null;
+    history: RequestHistory[];
+    currentHistoryId: string | null;
 }
 
 export default class PluginSample extends Plugin {
 
     private config: PluginConfig;
+    private dialogState: DialogState = {
+        selectedText: "",
+        selectedMenu: null,
+        requestData: {},
+        responseData: null,
+        step: "send",
+        loading: false,
+        loadingTime: 0,
+        error: null,
+        history: [],
+        currentHistoryId: null
+    };
 
     async onload() {
         await this.loadConfig();
@@ -57,23 +93,53 @@ export default class PluginSample extends Plugin {
         this.addCommand({
             langKey: "openMenu",
             hotkey: "⇧⌘I",
-            callback: async (protyle: Proactwrite) => {
-                const selectedText = window.getSelection().toString().trim();
-                if (!selectedText) {
-                    showMessage(this.i18n.selectTextFirst);
+            callback: async () => {
+                // 立即获取选中文本，确保在DOM变化前获取
+                const selection = window.getSelection();
+                if (!selection || selection.rangeCount === 0) {
+                    showMessage(this.i18n.selectTextFirst || "请先选中文本");
                     return;
                 }
-                await this.showDynamicMenu(protyle, selectedText);
+                const selectedText = selection.toString().trim();
+                if (!selectedText) {
+                    showMessage(this.i18n.selectTextFirst || "请先选中文本");
+                    return;
+                }
+                // 保存选中的文本到对话框状态
+                this.dialogState.selectedText = selectedText;
+                // 只显示浮动菜单，让用户选择接口
+                // 右侧对话框会在用户选择接口后显示
+                this.showFloatingMenu(selectedText, selection);
             },
+        });
+
+        // 添加右侧对话框
+        this.addDock({
+            type: "click2fillDialog",
+            config: {
+                position: "RightBottom",
+                size: {
+                    width: 400,
+                    height: null
+                },
+                icon: "iconClick2Fill",
+                title: "Click2Fill",
+                // 确保对话框默认不激活
+                actived: false
+                // 移除快捷键，避免与 addCommand 冲突
+            },
+            data: {},
+            init: (dock) => {
+                this.initSidebarDialog(dock.element);
+                // 确保对话框初始化后保持关闭状态
+                dock.actived = false;
+            }
         });
     }
     
     private async loadConfig() {
-        // loadData 是异步方法，需要使用 await
         const storedConfig = await this.loadData(STORAGE_NAME) || {};
         
-        // 处理可能的数据结构不一致问题
-        // 如果 storedConfig 本身是数组，说明是旧版本的数据结构
         if (Array.isArray(storedConfig)) {
             this.config = {
                 menus: storedConfig.map(menu => ({
@@ -81,30 +147,74 @@ export default class PluginSample extends Plugin {
                     insertionMethod: menu.insertionMethod || "current"
                 })),
                 defaultMenu: "",
-                knowledge: []
+                knowledge: [],
+                history: []
             };
-            // 转换后保存新格式
             await this.saveConfig();
         } else {
-            // 新的数据结构，有 menus, defaultMenu 和 knowledge 属性
+            let menus = Array.isArray(storedConfig.menus) ? storedConfig.menus.map(menu => ({
+                ...menu,
+                insertionMethod: menu.insertionMethod || "current"
+            })) : [];
+            
+            // 如果没有菜单，添加默认的demo接口（随机笑话API）
+            if (menus.length === 0) {
+                menus.push({
+                    id: "demo-joke-api",
+                    name: "随机笑话",
+                    icon: "iconFace",
+                    url: "https://api.timelessq.com/joke",
+                    method: "GET",
+                    headers: {
+                        "accept": "*/*",
+                        "accept-language": "zh-CN",
+                        "content-type": "application/json",
+                        "user-agent": "SiYuan/3.1.26 https://b3log.org/siyuan"
+                    },
+                    params: {
+                        "text": "\${selectText}",
+                        "type": "其他"
+                    },
+                    responseType: "json",
+                    template: "# 随机笑话\n\n## 内容\n\${data.content}\n\n## 类型\n\${data.type || '其他'}\n\n## 搞笑等级\n\${data.level || 0}/10",
+                    keyword: "笑话,幽默",
+                    regex: "",
+                    insertionMethod: "current"
+                });
+            }
+            
             this.config = {
-                menus: Array.isArray(storedConfig.menus) ? storedConfig.menus.map(menu => ({
-                    ...menu,
-                    insertionMethod: menu.insertionMethod || "current"
-                })) : [],
+                menus: menus,
                 defaultMenu: storedConfig.defaultMenu || "",
-                knowledge: Array.isArray(storedConfig.knowledge) ? storedConfig.knowledge : []
+                knowledge: Array.isArray(storedConfig.knowledge) ? storedConfig.knowledge : [],
+                history: Array.isArray(storedConfig.history) ? storedConfig.history : []
             };
+            
+            // 加载历史记录到对话框状态
+            if (Array.isArray(this.config.history)) {
+                this.dialogState.history = this.config.history;
+                // 确保历史记录数量不超过100条
+                if (this.dialogState.history.length > 100) {
+                    this.dialogState.history = this.dialogState.history.slice(0, 100);
+                    this.config.history = this.dialogState.history;
+                    await this.saveConfig();
+                }
+            }
+            
+            // 如果添加了默认菜单，保存配置
+            if (menus.length > 0 && !Array.isArray(storedConfig.menus)) {
+                await this.saveConfig();
+            }
         }
     }
     
     private async saveConfig() {
-        // 确保 this.config 有正确的结构
         if (!this.config) {
             this.config = {
                 menus: [],
                 defaultMenu: "",
-                knowledge: []
+                knowledge: [],
+                history: []
             };
         }
         
@@ -116,12 +226,14 @@ export default class PluginSample extends Plugin {
             this.config.knowledge = [];
         }
         
-        // saveData 是异步方法，需要使用 await
+        if (!Array.isArray(this.config.history)) {
+            this.config.history = [];
+        }
+        
         await this.saveData(STORAGE_NAME, this.config);
     }
     
     private addKnowledgeToConfig(keyword: string, content: string, menuId: string) {
-        // Check if knowledge already exists for this keyword
         const existingIndex = this.config.knowledge.findIndex(item => 
             item.keyword.toLowerCase() === keyword.toLowerCase() && item.menuId === menuId
         );
@@ -135,19 +247,14 @@ export default class PluginSample extends Plugin {
         };
         
         if (existingIndex >= 0) {
-            // Update existing knowledge
             this.config.knowledge[existingIndex] = knowledgeItem;
         } else {
-            // Add new knowledge
             this.config.knowledge.push(knowledgeItem);
         }
         
-        // Save the updated config
         this.saveConfig().catch(error => {
             console.error("Failed to save knowledge to config:", error);
         });
-        
-
     }
     
     private async sendRequest(menu: MenuConfig, selectedText: string): Promise<any> {
@@ -156,10 +263,8 @@ export default class PluginSample extends Plugin {
         };
         
         if (menu.params) {
-            // 创建params的深拷贝，避免修改原始配置
             const paramsCopy = JSON.parse(JSON.stringify(menu.params));
             
-            // 递归替换所有${selectText}占位符为实际选中的文本
             const replaceSelectText = (obj: any): any => {
                 if (typeof obj === "string") {
                     return obj.replace(/\$\{selectText\}/g, selectedText);
@@ -271,418 +376,744 @@ export default class PluginSample extends Plugin {
         return true;
     }
     
-    private async showDynamicMenu(protyle: Proactwrite, selectedText: string) {
-        if (!this.config || !Array.isArray(this.config.menus)) {
-            await this.loadConfig();
+    private async showSidebarDialog(): Promise<void> {
+        // 确保 sidebar dialog 可见
+        // 直接更新对话框内容，SiYuan 会自动管理 dock 的显示
+        this.updateSidebarDialog();
+        
+        // 尝试多种方法显示右侧面板和 Click2Fill 对话框
+        
+        // 方法 1：尝试通过 DOM 操作显示右侧面板
+        const rightPanel = document.querySelector(".layout__right");
+        if (rightPanel) {
+            rightPanel.style.display = "flex";
         }
         
-        // Get document ID when menu is created (before context is lost)
-        let docId;
-        
-        // Method 1: From protyle object (if available)
-        if (protyle) {
-            // Try to get document ID from different properties
-            if (protyle.block?.rootID) {
-                docId = protyle.block.rootID;
-            } else if (protyle.rootID) {
-                docId = protyle.rootID;
-            } else if (protyle.block?.id) {
-                docId = protyle.block.id;
-            } else if (protyle.id) {
-                docId = protyle.id;
-            }
+        // 方法 2：尝试直接点击右侧面板的切换按钮
+        const rightPanelToggle = document.querySelector(".layout__toggle--right");
+        if (rightPanelToggle) {
+            rightPanelToggle.click();
         }
         
-        // Method 2: From active editor element
-        if (!docId) {
-            const activeEditor = document.querySelector(".protyle-wysiwyg");
-            if (activeEditor) {
-                // Log all attributes of activeEditor
-                // Check all possible attributes for document ID
-                const possibleAttributes = ["data-node-id", "data-root-id", "data-block-id", "id"];
-                for (const attr of possibleAttributes) {
-                    const value = activeEditor.getAttribute(attr);
-                    if (value) {
-                        docId = value;
-                        break;
-                    }
-                }
-            }
-        }
-        
-        // Method 3: From URL hash
-        if (!docId) {
-            const hash = window.location.hash;
-            if (hash) {
-                // Try different URL patterns
-                const patterns = [
-                    /^#\/([a-f0-9]{20})$/i, // Original pattern
-                    /^#\/([a-z0-9-]{22})$/i, // Pattern with hyphen
-                    /id=([a-f0-9]{20})/i,    // Query parameter pattern
-                    /node=([a-f0-9]{20})/i   // Another query parameter pattern
-                ];
-                for (const pattern of patterns) {
-                    const match = hash.match(pattern);
-                    if (match && match[1]) {
-                        docId = match[1];
-                        break;
-                    }
-                }
-            }
-        }
-        
-        // Method 4: From active tab
-        if (!docId) {
-            // Try different selectors for active tab
-            const tabSelectors = [
-                ".tabs__item--active",
-                ".tab-item.active",
-                ".protyle-tabs__tab--active",
-                ".b3-tab--active"
-            ];
-            
-            for (const selector of tabSelectors) {
-                const activeTab = document.querySelector(selector);
-                if (activeTab) {
-                    // Check all possible attributes for document ID
-                    const possibleAttributes = ["data-node-id", "data-root-id", "data-block-id", "id", "data-id"];
-                    for (const attr of possibleAttributes) {
-                        const tabId = activeTab.getAttribute(attr);
-                        if (tabId) {
-                            docId = tabId;
-                            break;
-                        }
-                    }
-                    if (docId) break;
-                }
-            }
-        }
-        
-        // Method 5: Debug DOM structure
-        if (!docId) {
-            // Log all elements with data-node-id attribute (limit to first 20)
-            const elementsWithNodeId = document.querySelectorAll("[data-node-id]");
-            Array.from(elementsWithNodeId).slice(0, 20).forEach((el, index) => {
-                const nodeId = el.getAttribute("data-node-id");
-                const className = (el as Element).className;
-                const tagName = (el as Element).tagName;
-            });
-            if (elementsWithNodeId.length > 20) {
-            }
-            
-            // Log all tab elements
-            const tabElements = document.querySelectorAll(".tabs__item, .tab-item, .protyle-tabs__tab, .b3-tab");
-            tabElements.forEach((el, index) => {
-                const className = (el as Element).className;
-                const isActive = (el as Element).classList.contains("active") || (el as Element).classList.contains("--active");
-                const allAttrs = Array.from((el as Element).attributes).map(attr => `${attr.name}="${attr.value}"`).join(" ");
-            });
-            
-            // Log current URL
-            
-            // Log document body attributes
-            const bodyAttrs = Array.from(document.body.attributes).map(attr => `${attr.name}="${attr.value}"`).join(" ");
-        }
-        
-        // Method 6: Try to get from nearest protyle element
-        if (!docId) {
-            const protyleElements = document.querySelectorAll('[class*="protyle"]');
-            protyleElements.forEach((el, index) => {
-                const className = (el as Element).className;
-                const nodeId = el.getAttribute("data-node-id");
-                if (nodeId) {
-                    docId = nodeId;
-                }
-            });
-        }
-        
-        
-        const menu = new Menu("click2fill", () => {
-
-        });
-        
-        const matchedMenus = this.config.menus.filter(menuConfig => {
-            return this.isMenuMatch(menuConfig, selectedText);
-        });
-        
-        if (matchedMenus.length > 0) {
-            matchedMenus.forEach(menuConfig => {
-                menu.addItem({
-                        id: menuConfig.id,
-                        iconHTML: `<svg class="b3-menu__icon"><use xlink:href="#${menuConfig.icon}"></use></svg>`,
-                        label: menuConfig.name,
-                        click: () => {
-                            this.handleMenuClick(protyle, selectedText, menuConfig);
-                        }
-                    });
-            });
-            
-            menu.addItem({type: "separator"});
-        }
-        
-        menu.addItem({
-            id: "configure",
-            iconHTML: "<svg class=\"b3-menu__icon\"><use xlink:href=\"#iconSettings\"></use></svg>",
-            label: this.i18n.configure,
-            click: async () => {
-                await this.openConfigurePanel();
+        // 方法 3：尝试找到并点击 Click2Fill 的 dock 项
+        const dockItems = document.querySelectorAll(".dock__item");
+        let click2fillDockItem = null;
+        dockItems.forEach(item => {
+            const type = item.getAttribute("data-type");
+            // 匹配 click2fillDialog 或 click2fillclick2fillDialog（处理重复的情况）
+            if (type === "click2fillDialog" || type === "click2fillclick2fillDialog") {
+                click2fillDockItem = item;
             }
         });
         
-        let x = window.innerWidth / 2;
-        let y = window.innerHeight / 2;
+        if (click2fillDockItem) {
+            // 检查 dock 项是否已经激活，只有未激活时才点击
+            const isActive = click2fillDockItem.classList.contains("dock__item--active");
+            if (!isActive) {
+                click2fillDockItem.click();
+            }
+        } else {
+            // 尝试查找包含 Click2Fill 图标的元素
+            const iconItems = document.querySelectorAll("svg use[*|href='#iconClick2Fill']");
+            iconItems.forEach(icon => {
+                const parentButton = icon.closest("button");
+                if (parentButton) {
+                    parentButton.click();
+                }
+            });
+        }
         
+        // 方法 4：尝试通过 HTTP API 设置完整的布局
         try {
-            const selection = window.getSelection();
-            if (selection && selection.rangeCount > 0) {
-                const range = selection.getRangeAt(0);
-                const rect = range.getBoundingClientRect();
-                x = rect.left;
-                y = rect.bottom;
-            }
-        } catch (error) {
-            // Ignore selection range errors
-        }
-        
-        menu.open({x: x, y: y});
-    }
-    
-    private async handleMenuClick(protyle: Proactwrite, selectedText: string, menu: MenuConfig) {
-        
-        try {
-            // Call HTTP API to get supplementary knowledge
-            const data = await this.sendRequest(menu, selectedText);
-            
-            // Format the response content
-            const content = this.formatResponse(data, menu, selectedText);
-            
-            // Add the knowledge to the config for future use
-            this.addKnowledgeToConfig(selectedText, content, menu.id);
-            
-            // Use the insertion method configured in the menu
-            if (menu.insertionMethod === "subdocument") {
-                let finalDocId = "";
+            // 先获取当前布局
+            const getLayoutResponse = await fetch("/api/system/getUILayout");
+            if (getLayoutResponse.ok) {
+                const currentLayout = await getLayoutResponse.json();
                 
-                // Always get the current document ID when menu is clicked
-                // Method 1: From protyle object (if available and fresh)
-                if (protyle) {
-                    if (protyle.block?.rootID) {
-                        finalDocId = protyle.block.rootID;
-                    } else if (protyle.rootID) {
-                        finalDocId = protyle.rootID;
-                    } else if (protyle.block?.id) {
-                        finalDocId = protyle.block.id;
-                    } else if (protyle.id) {
-                        finalDocId = protyle.id;
-                    }
-                }
-                
-                // Method 2: From active window's protyle-background (most reliable, reference syplugin-hierarchyNavigate)
-                if (!finalDocId) {
-                    // Get current active window's protyle-background element
-                    // This is the most reliable way to get the current document ID
-                    const activeProtyleBackground = document.querySelector(".layout__wnd--active .protyle.fn__flex-1:not(.fn__none) .protyle-background");
-                    if (activeProtyleBackground) {
-                        const nodeId = activeProtyleBackground.getAttribute("data-node-id");
-                        if (nodeId) {
-                            finalDocId = nodeId;
-                        }
-                    }
-                }
-                
-                // Method 3: From active editor element with more specific selector
-                if (!finalDocId) {
-                    const activeEditor = document.querySelector(".layout__wnd--active .protyle-wysiwyg");
-                    if (activeEditor) {
-                        // Check all possible attributes for document ID
-                        const possibleAttributes = ["data-node-id", "data-root-id", "data-block-id", "id"];
-                        for (const attr of possibleAttributes) {
-                            const value = activeEditor.getAttribute(attr);
-                            if (value) {
-                                finalDocId = value;
-                                break;
-                            }
-                        }
-                    }
-                }
-                
-                // Method 4: From URL hash (fallback)
-                if (!finalDocId) {
-                    const hash = window.location.hash;
-                    if (hash) {
-                        // Try different URL patterns
-                        const patterns = [
-                            /^#\/([a-f0-9]{20})$/i, // Original pattern
-                            /^#\/([a-z0-9-]{22})$/i, // Pattern with hyphen
-                            /id=([a-f0-9]{20})/i,    // Query parameter pattern
-                            /node=([a-f0-9]{20})/i   // Another query parameter pattern
-                        ];
-                        for (const pattern of patterns) {
-                            const match = hash.match(pattern);
-                            if (match && match[1]) {
-                                finalDocId = match[1];
-                                break;
-                            }
-                        }
-                    }
-                }
-                
-                // Method 5: From active tab element with more specific selector
-                if (!finalDocId) {
-                    // Try different selectors for active tab
-                    const activeTab = document.querySelector(".layout__wnd--active .tabs__item--active") || 
-                                    document.querySelector(".layout__wnd--active .tab-item.active") ||
-                                    document.querySelector(".layout__wnd--active .protyle-tabs__tab--active") ||
-                                    document.querySelector(".layout__wnd--active .b3-tab--active");
-                    
-                    if (activeTab) {
-                        // Check all possible attributes for document ID
-                        const possibleAttributes = ["data-node-id", "data-root-id", "data-block-id", "id", "data-id"];
-                        for (const attr of possibleAttributes) {
-                            const tabId = activeTab.getAttribute(attr);
-                            if (tabId) {
-                                finalDocId = tabId;
-                                break;
-                            }
-                        }
-                    }
-                }
-                
-                // Method 6: From parent elements of the selection with active window context
-                if (!finalDocId) {
-                    const selection = window.getSelection();
-                    if (selection && selection.rangeCount > 0) {
-                        const range = selection.getRangeAt(0);
-                        let commonContainer = range.commonAncestorContainer;
-                        
-                        // Ensure commonContainer is an Element, not a Text node
-                        if (commonContainer.nodeType === Node.TEXT_NODE) {
-                            commonContainer = commonContainer.parentElement;
-                        }
-                        
-                        if (commonContainer && commonContainer.nodeType === Node.ELEMENT_NODE) {
-                            // Check if the selection is within an active window
-                            const activeWindow = commonContainer.closest(".layout__wnd--active");
-                            if (activeWindow) {
-                                // Traverse up the DOM tree to find an element with document ID
-                                let current = commonContainer;
-                                for (let i = 0; i < 10 && current; i++) {
-                                    // Check all possible attributes for document ID
-                                    const possibleAttributes = ["data-node-id", "data-root-id", "data-block-id", "id"];
-                                    for (const attr of possibleAttributes) {
-                                        const nodeId = current.getAttribute(attr);
-                                        if (nodeId) {
-                                            finalDocId = nodeId;
-                                            break;
-                                        }
-                                    }
-                                    if (finalDocId) break;
-                                    current = current.parentElement;
+                // 修改布局，确保右侧面板显示
+                currentLayout.layout.layout.children.forEach((row: any) => {
+                    if (row.children) {
+                        row.children.forEach((col: any) => {
+                            if (col.type === "right") {
+                                // 确保右侧面板大小大于 0
+                                if (col.size === "0px") {
+                                    col.size = "400px";
                                 }
                             }
-                        }
+                        });
                     }
-                }
+                });
                 
-                // Method 7: Fallback to all showing documents (reference syplugin-hierarchyNavigate)
-                if (!finalDocId) {
-                    // Get all showing protyle-background elements
-                    const allProtyleBackgrounds = document.querySelectorAll(".protyle-background:not(.fn__none)");
-                    // Filter to only get visible ones
-                    const visibleProtyleBackgrounds = Array.from(allProtyleBackgrounds).filter(el => {
-                        const rect = el.getBoundingClientRect();
-                        return rect.width > 0 && rect.height > 0;
-                    });
-                    // If only one visible, use it
-                    if (visibleProtyleBackgrounds.length === 1) {
-                        const nodeId = visibleProtyleBackgrounds[0].getAttribute("data-node-id");
-                        if (nodeId) {
-                            finalDocId = nodeId;
-                        }
-                    }
-                }
-                
-                
-                if (finalDocId) {
-                    await this.insertToSubdocument(finalDocId, selectedText, content, protyle);
-                } else {
-                    console.error("No document ID found after all methods");
-                    showMessage(this.i18n.requestFailed);
-                    
-                    // Debug information
-                    console.log("Debug info for document ID:");
-                    console.log("Protyle object:", protyle ? { hasRootID: !!protyle.rootID, hasBlockID: !!protyle.block?.id } : "No protyle");
-                    console.log("Active editor:", document.querySelector(".protyle-wysiwyg"));
-                    console.log("URL hash:", window.location.hash);
-                    console.log("Active tab:", document.querySelector(".tabs__item--active, .tab-item.active, .protyle-tabs__tab--active, .b3-tab--active"));
-                    console.log("Body attributes:", Array.from(document.body.attributes));
-                }
-            } else {
-                if (protyle) {
-                    this.insertContent(protyle, content);
-                    showMessage(this.i18n.contentInserted);
-                } else {
-                    console.error("No protyle found for current document insertion");
-                    // Try fallback method for inserting to current document
-                    const activeEditor = document.querySelector(".protyle-wysiwyg");
-                    if (activeEditor) {
-                        const selection = window.getSelection();
-                        if (selection && selection.rangeCount > 0) {
-                            const range = selection.getRangeAt(0);
-                            range.collapse(false);
-                            
-                            // Create a temporary div to hold the HTML content
-                            const tempDiv = document.createElement("div");
-                            tempDiv.innerHTML = content;
-                            
-                            // Insert each child node of the temp div into the document
-                            while (tempDiv.firstChild) {
-                                range.insertNode(tempDiv.firstChild);
-                            }
-                            
-                            range.collapse(false);
-                            selection.removeAllRanges();
-                            selection.addRange(range);
-                            
-                            showMessage(this.i18n.contentInserted);
-                        } else {
-                            showMessage(this.i18n.requestFailed);
-                            console.error("No selection found for fallback insertion");
-                        }
-                    } else {
-                        showMessage(this.i18n.requestFailed);
-                        console.error("No active editor found for fallback insertion");
-                    }
-                }
+                // 发送更新后的布局
+                const setLayoutResponse = await fetch("/api/system/setUILayout", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify(currentLayout)
+                });
             }
         } catch (error) {
-            console.error("Error in handleMenuClick:", error);
-            showMessage(this.i18n.requestFailed);
+            // 忽略 HTTP API 调用错误，继续执行
+        }
+    }
+    
+    private initSidebarDialog(element: HTMLElement) {
+        element.innerHTML = `
+            <div class="click2fill-dialog" style="padding: 16px; height: 100%; display: flex; flex-direction: column;">
+                <!-- 主操作按钮 -->
+                <div class="main-actions" style="display: flex; align-items: center; margin-bottom: 20px; gap: 8px;">
+                    <button class="action-btn" data-action="new" style="flex: 1; padding: 8px 12px; border: 1px solid var(--b3-theme-border); border-radius: 4px; background-color: var(--b3-theme-primary); color: white; cursor: pointer; transition: all 0.2s ease;">
+                        <svg class="b3-button__icon" style="width: 16px; height: 16px; margin-right: 4px;"><use xlink:href="#iconAdd"></use></svg>
+                        新请求
+                    </button>
+                    <button class="action-btn" data-action="config" style="flex: 1; padding: 8px 12px; border: 1px solid var(--b3-theme-border); border-radius: 4px; background-color: var(--b3-theme-background); color: var(--b3-theme-on-surface); cursor: pointer; transition: all 0.2s ease;">
+                        <svg class="b3-button__icon" style="width: 16px; height: 16px; margin-right: 4px;"><use xlink:href="#iconSettings"></use></svg>
+                        配置接口
+                    </button>
+                    <button class="action-btn" data-action="history" style="flex: 1; padding: 8px 12px; border: 1px solid var(--b3-theme-border); border-radius: 4px; background-color: var(--b3-theme-background); color: var(--b3-theme-on-surface); cursor: pointer; transition: all 0.2s ease;">
+                        <svg class="b3-button__icon" style="width: 16px; height: 16px; margin-right: 4px;"><use xlink:href="#iconHistory"></use></svg>
+                        历史记录
+                    </button>
+                </div>
+                
+                <!-- 步骤导航 (仅在新请求模式下显示) -->
+                <div class="step-nav" style="display: flex; align-items: center; margin-bottom: 20px; gap: 8px;">
+                    <button class="step-btn" data-step="send" style="flex: 1; padding: 8px 12px; border: 1px solid var(--b3-theme-border); border-radius: 4px; background-color: var(--b3-theme-background); color: var(--b3-theme-on-surface); cursor: pointer; transition: all 0.2s ease;">
+                        1. 装配报文
+                    </button>
+                    <button class="step-btn" data-step="result" disabled style="flex: 1; padding: 8px 12px; border: 1px solid var(--b3-theme-border); border-radius: 4px; background-color: var(--b3-theme-surface-light); color: var(--b3-theme-on-surface-light); cursor: not-allowed; transition: all 0.2s ease;">
+                        2. 请求结果
+                    </button>
+                </div>
+                
+                <!-- 内容区域 -->
+                <div id="dialog-content" style="flex: 1; overflow-y: auto;"></div>
+            </div>
+        `;
+        
+        // 添加主操作按钮事件监听
+        const actionBtns = element.querySelectorAll(".action-btn");
+        actionBtns.forEach(btn => {
+            btn.addEventListener("click", async (e) => {
+                const action = (e.target as HTMLElement).closest(".action-btn")?.getAttribute("data-action");
+                if (action === "new") {
+                    this.dialogState.step = "send";
+                    this.updateSidebarDialog();
+                } else if (action === "config") {
+                    await this.openConfigurePanel();
+                } else if (action === "history") {
+                    this.dialogState.step = "history";
+                    this.updateSidebarDialog();
+                }
+            });
+        });
+        
+        // 添加步骤导航事件监听
+        const stepBtns = element.querySelectorAll(".step-btn");
+        stepBtns.forEach(btn => {
+            btn.addEventListener("click", (e) => {
+                const step = (e.target as HTMLElement).closest(".step-btn")?.getAttribute("data-step") as "send" | "result";
+                if (step && this.canNavigateToStep(step)) {
+                    this.dialogState.step = step;
+                    this.updateSidebarDialog();
+                }
+            });
+        });
+        
+        this.updateSidebarDialog();
+    }
+    
+    private canNavigateToStep(step: "send" | "result"): boolean {
+        const stepOrder = { send: 0, result: 1 };
+        const currentStepOrder = stepOrder[this.dialogState.step as "send" | "result"] || 0;
+        const targetStepOrder = stepOrder[step];
+        // 只允许导航到当前步骤或之前的步骤
+        return targetStepOrder <= currentStepOrder;
+    }
+    
+    private updateSidebarDialog() {
+        const contentElement = document.querySelector("#dialog-content");
+        if (!contentElement) return;
+        
+        // 更新步骤导航状态
+        this.updateStepNavigation();
+        
+        // 清空内容并根据当前步骤渲染
+        contentElement.innerHTML = "";
+        
+        // 渲染当前步骤内容
+        switch (this.dialogState.step) {
+            case "send":
+            case "result":
+                // 渲染步骤导航
+                this.updateStepNavigation();
+                if (this.dialogState.step === "send") {
+                    this.renderSendStep(contentElement);
+                } else if (this.dialogState.step === "result") {
+                    this.renderResultStep(contentElement);
+                }
+                break;
+            case "history":
+                this.renderHistoryStep(contentElement);
+                break;
+        }
+    }
+    
+    private updateStepNavigation() {
+        const stepNav = document.querySelector(".step-nav");
+        const stepBtns = document.querySelectorAll(".step-btn");
+        
+        if (this.dialogState.step === "history") {
+            // 在历史记录模式下隐藏步骤导航
+            stepNav?.setAttribute("style", "display: none;");
+            return;
         }
         
+        // 显示步骤导航
+        stepNav?.setAttribute("style", "display: flex; align-items: center; margin-bottom: 20px; gap: 8px;");
+        
+        if (stepBtns.length !== 2) return;
+        
+        const stepOrder = { send: 0, result: 1 };
+        const currentStepOrder = stepOrder[this.dialogState.step as "send" | "result"] || 0;
+        
+        stepBtns.forEach((btn, index) => {
+            const step = btn.getAttribute("data-step") as "send" | "result";
+            if (index < currentStepOrder) {
+                // 已完成步骤
+                btn.removeAttribute("disabled");
+                btn.style.backgroundColor = "var(--b3-theme-primary-light)";
+                btn.style.color = "var(--b3-theme-on-primary)";
+                btn.style.cursor = "pointer";
+            } else if (index === currentStepOrder) {
+                // 当前步骤
+                btn.removeAttribute("disabled");
+                btn.style.backgroundColor = "var(--b3-theme-primary)";
+                btn.style.color = "white";
+                btn.style.cursor = "pointer";
+            } else {
+                // 未完成步骤
+                btn.setAttribute("disabled", "disabled");
+                btn.style.backgroundColor = "var(--b3-theme-surface-light)";
+                btn.style.color = "var(--b3-theme-on-surface-light)";
+                btn.style.cursor = "not-allowed";
+            }
+        });
+    }
+    
+    private renderHistoryStep(element: Element) {
+        let html = `
+            <div style="margin-bottom: 16px;">
+                <h3 style="margin-top: 0;">历史记录</h3>
+                <p style="margin-bottom: 16px; color: var(--b3-theme-on-surface-light);">查看之前的API调用记录</p>
+        `;
+        
+        if (this.dialogState.history.length === 0) {
+            html += `
+                <div class="b3-label--info" style="padding: 20px; text-align: center;">
+                    暂无历史记录
+                </div>
+            `;
+        } else {
+            html += `
+                <div style="display: flex; flex-direction: column; gap: 12px;">
+            `;
+            
+            this.dialogState.history.forEach((item, index) => {
+                const timestamp = new Date(item.timestamp).toLocaleString();
+                const isError = !!item.error;
+                
+                html += `
+                    <div class="history-item" data-history-id="${item.id}" style="border: 1px solid var(--b3-theme-border); border-radius: 4px; padding: 12px; cursor: pointer; transition: all 0.2s ease;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                            <div>
+                                <h4 style="margin: 0; display: flex; align-items: center;">
+                                    <svg class="b3-button__icon" style="width: 16px; height: 16px; margin-right: 8px;"><use xlink:href="#${item.menu.icon}"></use></svg>
+                                    ${item.menu.name}
+                                </h4>
+                                <p style="margin: 4px 0 0 0; font-size: 12px; color: var(--b3-theme-on-surface-light);">${timestamp}</p>
+                            </div>
+                            <div class="b3-label ${isError ? 'b3-label--error' : 'b3-label--success'}">
+                                ${isError ? '失败' : '成功'}
+                            </div>
+                        </div>
+                        <div style="font-size: 12px; color: var(--b3-theme-on-surface-light); margin-bottom: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                            选中文本: ${item.selectedText.length > 50 ? item.selectedText.substring(0, 50) + '...' : item.selectedText}
+                        </div>
+                        ${isError ? `
+                            <div class="b3-label--error" style="font-size: 12px; padding: 4px 8px; margin-top: 4px;">
+                                错误: ${item.error}
+                            </div>
+                        ` : ''}
+                    </div>
+                `;
+            });
+            
+            html += `
+                </div>
+            `;
+        }
+        
+        html += `
+            </div>
+        `;
+        
+        element.innerHTML = html;
+        
+        // 添加历史记录项点击事件
+        const historyItems = element.querySelectorAll(".history-item");
+        historyItems.forEach(item => {
+            item.addEventListener("click", (e) => {
+                const historyId = (e.currentTarget as HTMLElement).getAttribute("data-history-id");
+                if (historyId) {
+                    this.viewHistoryDetail(historyId);
+                }
+            });
+        });
+    }
+    
+    private viewHistoryDetail(historyId: string) {
+        const historyItem = this.dialogState.history.find(item => item.id === historyId);
+        if (!historyItem) return;
+        
+        // 显示历史记录详情
+        const contentElement = document.querySelector("#dialog-content");
+        if (!contentElement) return;
+        
+        const isError = !!historyItem.error;
+        const formattedRequest = JSON.stringify(historyItem.requestData, null, 2);
+        const formattedResponse = historyItem.responseData ? JSON.stringify(historyItem.responseData, null, 2) : '';
+        
+        let html = `
+            <div style="margin-bottom: 20px;">
+                <div style="display: flex; align-items: center; margin-bottom: 16px;">
+                    <button class="b3-button" id="back-to-history" style="margin-right: 12px;">
+                        <svg class="b3-button__icon"><use xlink:href="#iconBack"></use></svg>
+                        <span>返回历史</span>
+                    </button>
+                    <h3 style="margin: 0;">历史记录详情</h3>
+                </div>
+                
+                <div style="margin-bottom: 16px;">
+                    <h4 style="margin-bottom: 8px;">基本信息</h4>
+                    <div style="display: flex; align-items: center; margin-bottom: 8px;">
+                        <svg class="b3-button__icon" style="width: 16px; height: 16px; margin-right: 8px;"><use xlink:href="#${historyItem.menu.icon}"></use></svg>
+                        <span><strong>接口:</strong> ${historyItem.menu.name}</span>
+                    </div>
+                    <div style="margin-bottom: 8px;">
+                        <strong>时间:</strong> ${new Date(historyItem.timestamp).toLocaleString()}
+                    </div>
+                    <div style="margin-bottom: 8px;">
+                        <strong>选中文本:</strong>
+                        <div class="b3-label--info" style="margin-top: 4px; padding: 8px;">
+                            ${historyItem.selectedText}
+                        </div>
+                    </div>
+                </div>
+                
+                <div style="margin-bottom: 16px;">
+                    <h4 style="margin-bottom: 8px;">请求数据</h4>
+                    <pre style="background-color: var(--b3-theme-surface-light); padding: 12px; border-radius: 4px; overflow-x: auto; font-size: 12px; user-select: text;">${formattedRequest}</pre>
+                </div>
+                
+                <div style="margin-bottom: 16px;">
+                    <h4 style="margin-bottom: 8px;">响应数据</h4>
+                    ${isError ? `
+                        <div class="b3-label--error" style="padding: 12px; border-radius: 4px;">
+                            ${historyItem.error}
+                        </div>
+                    ` : `
+                        <pre style="background-color: var(--b3-theme-surface-light); padding: 12px; border-radius: 4px; overflow-x: auto; font-size: 12px; user-select: text;">${formattedResponse}</pre>
+                    `}
+                </div>
+                
+                <div style="display: flex; gap: 8px;">
+                    <button class="b3-button" id="reuse-request">
+                        <svg class="b3-button__icon"><use xlink:href="#iconRefresh"></use></svg>
+                        <span>重用请求</span>
+                    </button>
+                    ${!isError ? `
+                        <button class="b3-button b3-button--primary" id="copy-history-result">
+                            <svg class="b3-button__icon"><use xlink:href="#iconCopy"></use></svg>
+                            <span>复制结果</span>
+                        </button>
+                    ` : ''}
+                </div>
+            </div>
+        `;
+        
+        contentElement.innerHTML = html;
+        
+        // 添加返回按钮事件
+        const backBtn = contentElement.querySelector("#back-to-history");
+        if (backBtn) {
+            backBtn.addEventListener("click", () => {
+                this.dialogState.step = "history";
+                this.updateSidebarDialog();
+            });
+        }
+        
+        // 添加重用请求按钮事件
+        const reuseBtn = contentElement.querySelector("#reuse-request");
+        if (reuseBtn) {
+            reuseBtn.addEventListener("click", () => {
+                // 重用历史请求
+                this.dialogState.selectedText = historyItem.selectedText;
+                this.dialogState.selectedMenu = historyItem.menu;
+                this.dialogState.requestData = historyItem.requestData;
+                this.dialogState.step = "send";
+                this.updateSidebarDialog();
+            });
+        }
+        
+        // 添加复制结果按钮事件
+        const copyBtn = contentElement.querySelector("#copy-history-result");
+        if (copyBtn && !isError) {
+            copyBtn.addEventListener("click", () => {
+                const formattedHistoryResponse = this.formatResponse(
+                    historyItem.responseData,
+                    historyItem.menu,
+                    historyItem.selectedText
+                );
+                navigator.clipboard.writeText(formattedHistoryResponse).then(() => {
+                    showMessage("结果已复制到剪贴板");
+                }).catch(err => {
+                    showMessage("复制失败，请手动选择复制");
+                    console.error("复制失败:", err);
+                });
+            });
+        }
+    }
+    
+    private renderPrepareStep(element: Element) {
+        const matchedMenus = this.config.menus.filter(menuConfig => {
+            return this.isMenuMatch(menuConfig, this.dialogState.selectedText);
+        });
+        
+        let html = `
+            <div style="margin-bottom: 16px;">
+                <h3 style="margin-top: 0;">选择接口</h3>
+                <p style="margin-bottom: 12px;">已选文本: <strong>${this.dialogState.selectedText}</strong></p>
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+        `;
+        
+        if (matchedMenus.length > 0) {
+            matchedMenus.forEach(menu => {
+                html += `
+                    <button class="b3-button" style="text-align: left;" data-menu-id="${menu.id}">
+                        <svg class="b3-button__icon"><use xlink:href="#${menu.icon}"></use></svg>
+                        <span>${menu.name}</span>
+                    </button>
+                `;
+            });
+        } else {
+            html += `
+                <div class="b3-label--info">
+                    没有匹配的接口，请先配置接口
+                </div>
+            `;
+        }
+        
+        html += `
+                </div>
+            </div>
+            <button class="b3-button b3-button--primary" id="configure-btn">
+                <svg class="b3-button__icon"><use xlink:href="#iconSettings"></use></svg>
+                <span>配置接口</span>
+            </button>
+        `;
+        
+        element.innerHTML = html;
+        
+        matchedMenus.forEach(menu => {
+            const button = element.querySelector(`button[data-menu-id="${menu.id}"]`);
+            if (button) {
+                button.addEventListener("click", () => {
+                    this.dialogState.selectedMenu = menu;
+                    this.dialogState.step = "send";
+                    this.prepareRequestData();
+                    this.updateSidebarDialog();
+                });
+            }
+        });
+        
+        const configureBtn = element.querySelector("#configure-btn");
+        if (configureBtn) {
+            configureBtn.addEventListener("click", async () => {
+                await this.openConfigurePanel();
+            });
+        }
+    }
+    
+    private prepareRequestData() {
+        if (!this.dialogState.selectedMenu) return;
+        
+        const menu = this.dialogState.selectedMenu;
+        const selectedText = this.dialogState.selectedText;
+        
+        const requestData: any = {
+            text: selectedText
+        };
+        
+        if (menu.params) {
+            const paramsCopy = JSON.parse(JSON.stringify(menu.params));
+            
+            const replaceSelectText = (obj: any): any => {
+                if (typeof obj === "string") {
+                    return obj.replace(/\$\{selectText\}/g, selectedText);
+                } else if (typeof obj === "object" && obj !== null) {
+                    if (Array.isArray(obj)) {
+                        return obj.map(item => replaceSelectText(item));
+                    } else {
+                        const result: any = {};
+                        for (const key in obj) {
+                            if (obj.hasOwnProperty(key)) {
+                                result[key] = replaceSelectText(obj[key]);
+                            }
+                        }
+                        return result;
+                    }
+                }
+                return obj;
+            };
+            
+            const processedParams = replaceSelectText(paramsCopy);
+            Object.assign(requestData, processedParams);
+        }
+        
+        this.dialogState.requestData = requestData;
+    }
+    
+    private renderSendStep(element: Element) {
+        if (!this.dialogState.selectedMenu) return;
+        
+        const menu = this.dialogState.selectedMenu;
+        
+        const html = `
+            <div style="margin-bottom: 16px;">
+                <h3 style="margin-top: 0;">装配报文</h3>
+                <div class="b3-label" style="margin-bottom: 12px;">
+                    <svg class="b3-label__icon"><use xlink:href="#${menu.icon}"></use></svg>
+                    <span>${menu.name}</span>
+                </div>
+                
+                <div style="margin-bottom: 12px;">
+                    <h4 style="margin-bottom: 8px;">请求信息</h4>
+                    <div class="b3-label--info" style="margin-bottom: 8px;">
+                        <strong>URL:</strong> ${menu.url}
+                    </div>
+                    <div class="b3-label--info" style="margin-bottom: 8px;">
+                        <strong>Method:</strong> ${menu.method}
+                    </div>
+                </div>
+                
+                <div style="margin-bottom: 12px;">
+                    <h4 style="margin-bottom: 8px;">请求数据</h4>
+                    <pre style="background-color: var(--b3-theme-surface-light); padding: 12px; border-radius: 4px; overflow-x: auto; font-size: 12px; user-select: text;">${JSON.stringify(this.dialogState.requestData, null, 2)}</pre>
+                </div>
+            </div>
+            
+            <div style="display: flex; gap: 8px;">
+                <button class="b3-button" id="back-btn">
+                    <svg class="b3-button__icon"><use xlink:href="#iconBack"></use></svg>
+                    <span>返回</span>
+                </button>
+                <button class="b3-button b3-button--primary" id="send-btn" ${this.dialogState.loading ? "disabled" : ""}>
+                    ${this.dialogState.loading ? (
+                        `<div style="display: flex; align-items: center; gap: 8px;"><div class="b3-loading"></div><span>请求中 ${this.dialogState.loadingTime}s</span></div>`
+                    ) : (
+                        '<svg class="b3-button__icon"><use xlink:href="#iconSend"></use></svg><span>发送请求</span>'
+                    )}
+                </button>
+            </div>
+        `;
+        
+        element.innerHTML = html;
+        
+        const backBtn = element.querySelector("#back-btn");
+        if (backBtn) {
+            backBtn.addEventListener("click", () => {
+                this.dialogState.step = "prepare";
+                this.updateSidebarDialog();
+            });
+        }
+        
+        const sendBtn = element.querySelector("#send-btn");
+        if (sendBtn) {
+            sendBtn.addEventListener("click", async () => {
+                await this.sendRequestAndShowResult();
+            });
+        }
+    }
+    
+    private async sendRequestAndShowResult() {
+        if (!this.dialogState.selectedMenu) return;
+        
+        this.dialogState.loading = true;
+        this.dialogState.loadingTime = 0;
+        this.dialogState.error = null;
+        this.updateSidebarDialog();
+        
+        const startTime = Date.now();
+        const loadingInterval: NodeJS.Timeout = setInterval(() => {
+            this.dialogState.loadingTime = Math.floor((Date.now() - startTime) / 1000);
+            this.updateSidebarDialog();
+        }, 1000);
+        
+        try {
+            const data = await this.sendRequest(this.dialogState.selectedMenu, this.dialogState.selectedText);
+            this.dialogState.responseData = data;
+            this.dialogState.step = "result";
+            
+            this.addKnowledgeToConfig(
+                this.dialogState.selectedText,
+                this.formatResponse(data, this.dialogState.selectedMenu, this.dialogState.selectedText),
+                this.dialogState.selectedMenu.id
+            );
+            
+            // 添加到历史记录
+            this.addToHistory(this.dialogState.selectedText, this.dialogState.selectedMenu, this.dialogState.requestData, data, null);
+        } catch (error) {
+            this.dialogState.error = error instanceof Error ? error.message : "请求失败";
+            
+            // 添加错误到历史记录
+            this.addToHistory(this.dialogState.selectedText, this.dialogState.selectedMenu!, this.dialogState.requestData, null, this.dialogState.error);
+        } finally {
+            clearInterval(loadingInterval);
+            this.dialogState.loading = false;
+            this.updateSidebarDialog();
+        }
+    }
+    
+    private addToHistory(selectedText: string, menu: MenuConfig, requestData: any, responseData: any, error: string | null) {
+        const historyItem: RequestHistory = {
+            id: `history-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+            timestamp: Date.now(),
+            selectedText,
+            menu,
+            requestData,
+            responseData,
+            error
+        };
+        
+        this.dialogState.history.unshift(historyItem); // 添加到开头
+        this.dialogState.currentHistoryId = historyItem.id;
+        
+        // 限制历史记录数量
+        if (this.dialogState.history.length > 100) {
+            this.dialogState.history = this.dialogState.history.slice(0, 100);
+        }
+        
+        // 更新配置中的历史记录
+        if (this.config) {
+            this.config.history = this.dialogState.history;
+            // 保存配置，持久化历史记录
+            this.saveConfig().catch(error => {
+                console.error("保存历史记录失败:", error);
+            });
+        }
+    }
+    
+    private renderResultStep(element: Element) {
+        if (this.dialogState.error) {
+            element.innerHTML = `
+                <div style="margin-bottom: 16px;">
+                    <h3 style="margin-top: 0;">请求失败</h3>
+                    <div class="b3-label--error" style="margin-bottom: 16px;">
+                        ${this.dialogState.error}
+                    </div>
+                </div>
+                <div style="display: flex; gap: 8px;">
+                    <button class="b3-button" id="back-to-send-btn">
+                        <svg class="b3-button__icon"><use xlink:href="#iconBack"></use></svg>
+                        <span>返回</span>
+                    </button>
+                    <button class="b3-button b3-button--primary" id="retry-btn">
+                        <svg class="b3-button__icon"><use xlink:href="#iconRefresh"></use></svg>
+                        <span>重试</span>
+                    </button>
+                </div>
+            `;
+            
+            const backBtn = element.querySelector("#back-to-send-btn");
+            if (backBtn) {
+                backBtn.addEventListener("click", () => {
+                    this.dialogState.step = "send";
+                    this.updateSidebarDialog();
+                });
+            }
+            
+            const retryBtn = element.querySelector("#retry-btn");
+            if (retryBtn) {
+                retryBtn.addEventListener("click", async () => {
+                    await this.sendRequestAndShowResult();
+                });
+            }
+            
+            return;
+        }
+        
+        const formattedResponse = this.formatResponse(
+            this.dialogState.responseData,
+            this.dialogState.selectedMenu!,
+            this.dialogState.selectedText
+        );
+        
+        element.innerHTML = `
+            <div style="margin-bottom: 16px;">
+                <h3 style="margin-top: 0;">请求结果</h3>
+                <div style="margin-bottom: 12px;">
+                    <h4 style="margin-bottom: 8px;">响应数据</h4>
+                    <div class="b3-label--info" style="padding: 12px; border-radius: 4px; white-space: pre-wrap; font-family: var(--b3-font-family-code); font-size: 12px; user-select: text;">${formattedResponse}</div>
+                </div>
+            </div>
+            
+            <div style="display: flex; gap: 8px;">
+                <button class="b3-button" id="back-to-prepare-btn">
+                    <svg class="b3-button__icon"><use xlink:href="#iconBack"></use></svg>
+                    <span>返回</span>
+                </button>
+                <button class="b3-button b3-button--primary" id="copy-btn">
+                    <svg class="b3-button__icon"><use xlink:href="#iconCopy"></use></svg>
+                    <span>复制结果</span>
+                </button>
+            </div>
+        `;
+        
+        const backBtn = element.querySelector("#back-to-prepare-btn");
+        if (backBtn) {
+            backBtn.addEventListener("click", () => {
+                this.dialogState.step = "prepare";
+                this.updateSidebarDialog();
+            });
+        }
+        
+        const copyBtn = element.querySelector("#copy-btn");
+        if (copyBtn) {
+            copyBtn.addEventListener("click", () => {
+                navigator.clipboard.writeText(formattedResponse).then(() => {
+                    showMessage("结果已复制到剪贴板");
+                }).catch(err => {
+                    showMessage("复制失败，请手动选择复制");
+                    console.error("复制失败:", err);
+                });
+            });
+        }
     }
     
     private formatResponse(data: any, menu: MenuConfig, selectedText: string): string {
-        const escapeHtml = (text: string): string => {
-            const div = document.createElement("div");
-            div.textContent = text;
-            return div.innerHTML;
-        };
-        
-        // Function to get value from nested object/array using path notation like a.b.c or a.b[0].c
         const getValueByPath = (obj: any, path: string): any => {
             if (obj === null || obj === undefined) return undefined;
             
-            // Split path into segments, handling both dot notation and bracket notation
             const segments = path.split(/(?<!\\)\.|(?<!\\)\[(.*?)(?<!\\)\]/g)
                 .filter(segment => segment && segment !== "[")
-                .map(segment => segment.replace(/^['"]|['"]$/g, '')); // Remove quotes from array indices
+                .map(segment => segment.replace(/^['"]|['"]$/g, ""));
             
             let current = obj;
             for (const segment of segments) {
                 if (current === null || current === undefined) return undefined;
                 
-                // Handle array index access
                 if (!isNaN(Number(segment))) {
                     const index = Number(segment);
                     if (Array.isArray(current) && index >= 0 && index < current.length) {
@@ -691,7 +1122,6 @@ export default class PluginSample extends Plugin {
                         return undefined;
                     }
                 } else {
-                    // Handle object property access
                     if (typeof current === "object" && segment in current) {
                         current = current[segment];
                     } else {
@@ -702,945 +1132,844 @@ export default class PluginSample extends Plugin {
             return current;
         };
         
+        const renderTemplate = (template: string, context: any): string => {
+            // 处理数组循环
+            const eachRegex = /\$\{each\(([^)]+)\s+as\s+([^}]+)\)\}\s*([\s\S]*?)\$\{end\}/g;
+            
+            let rendered = template.replace(eachRegex, (match, arrayPath, itemName, content) => {
+                const array = getValueByPath(context, arrayPath.trim());
+                if (!Array.isArray(array)) return match;
+                
+                return array.map((item: any) => {
+                    // 为每个数组项创建新的上下文
+                    const itemContext = {
+                        ...context,
+                        [itemName.trim()]: item
+                    };
+                    // 递归渲染数组项内容
+                    return renderTemplate(content, itemContext);
+                }).join('');
+            });
+            
+            // 处理普通变量替换
+            rendered = rendered.replace(/\$\{([^}]+)\}/g, (match, expression) => {
+                expression = expression.trim();
+                
+                if (expression === "data") {
+                    const dataStr = typeof context === "object" ? JSON.stringify(context, null, 2) : String(context);
+                    return dataStr;
+                } else if (expression === "selectText") {
+                    return selectedText;
+                }
+                
+                // 处理默认值语法：${path || defaultValue}
+                const defaultValueMatch = expression.match(/^\s*([^|]+)\s*\|\|\s*(.+)$/);
+                if (defaultValueMatch) {
+                    const path = defaultValueMatch[1].trim();
+                    const defaultValue = defaultValueMatch[2].trim();
+                    
+                    const value = getValueByPath(context, path);
+                    if (value !== undefined && value !== null && value !== "") {
+                        return String(value);
+                    } else {
+                        // 解析默认值，处理字符串引号
+                        if ((defaultValue.startsWith('"') && defaultValue.endsWith('"')) || 
+                            (defaultValue.startsWith("'") && defaultValue.endsWith("'"))) {
+                            return defaultValue.substring(1, defaultValue.length - 1);
+                        }
+                        return defaultValue;
+                    }
+                }
+                
+                // 普通变量替换
+                const value = getValueByPath(context, expression);
+                return value !== undefined ? String(value) : match;
+            });
+            
+            return rendered;
+        };
+        
         if (menu.template) {
             try {
-                // Updated regex to match more complex paths including dots and brackets
-                let rendered = menu.template.replace(/\$\{([^}]+)\}/g, (match, path) => {
-                    path = path.trim();
-                    
-                    if (path === "data") {
-                        const dataStr = typeof data === "object" ? JSON.stringify(data, null, 2) : String(data);
-                        return `<span class="plugin-click2fill__hover-link" title="${escapeHtml(dataStr)}">${escapeHtml(dataStr)}</span>`;
-                    } else if (path === "selectText") {
-                        return `<span class="plugin-click2fill__hover-link" title="${escapeHtml(selectedText)}">${escapeHtml(selectedText)}</span>`;
-                    }
-                    
-                    const value = getValueByPath(data, path);
-                    return value !== undefined ? 
-                        `<span class="plugin-click2fill__hover-link" title="${escapeHtml(String(value))}">${escapeHtml(String(value))}</span>` : 
-                        match;
-                });
+                let rendered = renderTemplate(menu.template, data);
                 rendered = rendered.replace(/\\n/g, "\n");
                 return rendered;
             } catch (error) {
-                // Template rendering failed, fallback to default formatting
                 console.error("Template rendering error:", error);
             }
         }
         
-        const content = typeof data === "object" ? JSON.stringify(data, null, 2) : String(data);
-        return `<span class="plugin-click2fill__hover-link" title="${escapeHtml(content)}">${escapeHtml(content)}</span>`;
+        return typeof data === "object" ? JSON.stringify(data, null, 2) : String(data);
     }
     
-    private insertContent(protyle: Proactwrite, content: string) {
-        const selection = window.getSelection();
-        if (!selection || selection.rangeCount === 0) {
-            return;
-        }
+    private insertResultToDocument() {
+        const content = this.formatResponse(
+            this.dialogState.responseData,
+            this.dialogState.selectedMenu!,
+            this.dialogState.selectedText
+        );
         
-        const range = selection.getRangeAt(0);
-        range.collapse(false);
-        
-        // Create a temporary div to hold the HTML content
-        const tempDiv = document.createElement("div");
-        tempDiv.innerHTML = content;
-        
-        // Insert each child node of the temp div into the document
-        while (tempDiv.firstChild) {
-            range.insertNode(tempDiv.firstChild);
-        }
-        
-        range.collapse(false);
-        selection.removeAllRanges();
-        selection.addRange(range);
-        
-        const activeElement = document.activeElement;
-        if (activeElement) {
-            const inputEvent = new InputEvent("input", {
-                bubbles: true,
-                cancelable: true,
-                composed: true
-            });
-            activeElement.dispatchEvent(inputEvent);
-        }
-    }
-    
-    private async insertToSubdocument(currentDocId: string, selectedText: string, content: string, protyle?: Proactwrite) {
-        
-        try {
-            // Get document info to get notebook ID and path
-            const docInfo = await this.fetchPost("/api/filetree/getDoc", {
-                id: currentDocId,
-                mode: 0,
-                size: 1
-            });
-            
-            if (!docInfo || !docInfo.box) {
-                console.error("Invalid document info, missing box:", docInfo);
-                showMessage(this.i18n.requestFailed);
-                return;
-            }
-            
-            const notebookId = docInfo.box;
-            
-            // Get parent document path to create subdocument in the same directory
-            let parentPath = docInfo.path ? docInfo.path.substring(0, docInfo.path.lastIndexOf(".sy")) : "";
-            
-            // For all documents, create subdocuments in the same directory
-            // This ensures each document has its own配套知识 documents
-            const designDocPath = parentPath;
-            
-            // Generate a unique ID for the subdocument in SiYuan format: YYYYMMDDHHmmss-randomstring
-            const now = new Date();
-            const dateStr = now.toISOString().slice(0, 10).replace(/-/g, "");
-            const timeStr = now.toTimeString().slice(0, 8).replace(/:/g, "");
-            const randomStr = Math.random().toString(36).substring(2, 8);
-            const subdocId = `${dateStr}${timeStr}-${randomStr}`;
-            
-            // Create subdocument title and path
-            // All "配套知识" documents should be in the design document's directory
-            const subdocTitle = `配套知识：${selectedText}`;
-            const subdocPath = `${designDocPath}/${subdocId}.sy`;
-            
-            // Create subdocument with markdown content
-            const createdSubdoc = await this.fetchPost("/api/filetree/createDoc", {
-                notebook: notebookId,
-                path: subdocPath,
-                title: subdocTitle,
-                md: `# ${subdocTitle}\n\n${content}`
-            });
-            
-            
-            // Wait a moment for the subdocument to be fully created and indexed
-            await new Promise(resolve => setTimeout(resolve, 500));
-            
-            // Step 1: Directly use the subdocument ID for reference
-            // No need to search - we know the subdocument contains the content
-            let refBlockId = subdocId;
-            
-            // Step 2: Get current selection and block info
-            // IMPORTANT: Always get the current active editor and selection when inserting
-            // This ensures we're working with the current document, not a stale selection from a previous document
-            const activeEditor = document.querySelector(".protyle-wysiwyg");
-            if (!activeEditor) {
-                console.error("No active editor found");
-                showMessage(this.i18n.requestFailed);
-                return;
-            }
-            
-            const selection = window.getSelection();
-            if (!selection || selection.rangeCount === 0) {
-                console.error("No selection found");
-                showMessage(this.i18n.requestFailed);
-                return;
-            }
-            
-            // Get current root ID to verify we're working with the same document
-            // Try multiple ways to get the root ID
-            let currentRootId = activeEditor.getAttribute("data-node-id") || activeEditor.getAttribute("data-root-id");
-            
-            // If not found on activeEditor, try to find it from parent elements
-            if (!currentRootId) {
-                let parentElement = activeEditor.parentElement;
-                while (parentElement && !currentRootId) {
-                    currentRootId = parentElement.getAttribute("data-node-id") || parentElement.getAttribute("data-root-id");
-                    parentElement = parentElement.parentElement;
-                }
-            }
-            
-            // If still not found, try to get from nearest protyle element
-            if (!currentRootId) {
-                const protyleElements = document.querySelectorAll('[class*="protyle"]');
-                for (const el of Array.from(protyleElements)) {
-                    currentRootId = el.getAttribute("data-node-id") || el.getAttribute("data-root-id");
-                    if (currentRootId) {
-                        break;
-                    }
-                }
-            }
-            
-            // If still not found, try to get from active tab
-            if (!currentRootId) {
-                const activeTab = document.querySelector(".tabs__item--active, .tab-item.active, .protyle-tabs__tab--active, .b3-tab--active");
-                if (activeTab) {
-                    currentRootId = activeTab.getAttribute("data-node-id") || activeTab.getAttribute("data-root-id") || activeTab.getAttribute("data-id");
-                }
-            }
-            
-            // If we still can't get the root ID, we'll skip the verification
-            // This is because sometimes the editor structure might be different
-            if (currentRootId && currentRootId !== currentDocId) {
-                console.error("Current document ID mismatch. Expected:", currentDocId, "Actual:", currentRootId);
-                showMessage(this.i18n.requestFailed);
-                return;
-            }
-            
-            const range = selection.getRangeAt(0);
-            let commonContainer = range.commonAncestorContainer;
-            
-            // Ensure commonContainer is an Element, not a Text node
-            if (commonContainer.nodeType === Node.TEXT_NODE) {
-                commonContainer = commonContainer.parentElement;
-            }
-            
-            if (!commonContainer || commonContainer.nodeType !== Node.ELEMENT_NODE) {
-                console.error("Invalid common container");
-                showMessage(this.i18n.requestFailed);
-                return;
-            }
-            
-            // Ensure the selection is within the current active editor
-            if (!activeEditor.contains(commonContainer)) {
-                console.error("Selection is not within the active editor. This is likely because the document was switched.");
-                // Fallback: get the first paragraph in the current active editor
-                const firstParagraph = activeEditor.querySelector(".p");
-                if (firstParagraph) {
-                    commonContainer = firstParagraph;
-                } else {
-                    showMessage(this.i18n.requestFailed);
-                    return;
-                }
-            }
-            
-            const blockElement = commonContainer.closest(".p") as HTMLElement;
-            if (!blockElement) {
-                console.error("No paragraph block found");
-                showMessage(this.i18n.requestFailed);
-                return;
-            }
-            
-            const blockId = blockElement.getAttribute("data-node-id");
-            if (!blockId) {
-                console.error("No block ID found");
-                showMessage(this.i18n.requestFailed);
-                return;
-            }
-            
-            // Create proper HTML block reference format for SiYuan
-            // This is the most reliable way to ensure proper rendering
-            const refLink = `<span data-type="block-ref" data-id="${subdocId}" data-subtype="s">${selectedText}</span>`;
-            
-            // Step 1: Use the transaction API to update the block with proper HTML block reference
-            // This is the most reliable way to ensure proper rendering in SiYuan
-            const currentBlockContent = blockElement.outerHTML;
-            
-            // Create new block content with the reference span
-            const newContent = currentBlockContent.replace(
-                new RegExp(selectedText, "g"),
-                refLink
-            );
-            
-            // Use transactions API to update the block - this is the standard way SiYuan handles block updates
-            let updateSuccess = false;
-            try {
-                const sessionId = `session-${Date.now()}`;
-                await this.fetchPost("/api/transactions", {
-                    session: sessionId,
-                    app: "click2fill",
-                    transactions: [{
-                        doOperations: [{
-                            id: blockId,
-                            data: newContent,
-                            action: "update"
-                        }],
-                        undoOperations: [{
-                            id: blockId,
-                            data: currentBlockContent,
-                            action: "update"
-                        }]
-                    }],
-                    reqId: Date.now()
-                });
-                updateSuccess = true;
-            } catch (error) {
-                console.error("Transaction failed, using fallback method:", error);
-            }
-            
-            if (updateSuccess) {
-                showMessage(this.i18n.contentInsertedToSubdoc);
-            } else {
-                console.error("Failed to update block content, using fallback method");
-                // Fallback: use simple block reference format ((id))
-                const simpleRefLink = `((${subdocId}))`;
-                
-                try {
-                    // Try to use the selection directly with simple reference format
-                    if (selection && selection.rangeCount > 0) {
-                        const range = selection.getRangeAt(0);
-                        if (blockElement.contains(range.commonAncestorContainer)) {
-                            // Delete the selected text and insert the simple refLink
-                            range.deleteContents();
-                            const linkText = document.createTextNode(simpleRefLink);
-                            range.insertNode(linkText);
-                            
-                            // Move cursor to end of inserted text
-                            range.setStartAfter(linkText);
-                            range.collapse(true);
-                            selection.removeAllRanges();
-                            selection.addRange(range);
-                            
-                            // Trigger input event to ensure editor re-parses the content
-                            const inputEvent = new InputEvent("input", {
-                                bubbles: true,
-                                cancelable: true,
-                                composed: true
-                            });
-                            blockElement.dispatchEvent(inputEvent);
-                            
-                            showMessage(this.i18n.contentInsertedToSubdoc);
-                            return;
-                        }
-                    }
-                    
-                    // If selection-based replacement fails, try API-based approach with simple format
-                    const currentBlockText = blockElement.textContent || "";
-                    const updatedText = currentBlockText.replace(selectedText, simpleRefLink);
-                    
-                    await this.fetchPost("/api/block/updateBlock", {
-                        id: blockId,
-                        dataType: "markdown",
-                        data: updatedText
-                    });
-                    showMessage(this.i18n.contentInsertedToSubdoc);
-                } catch (fallbackError) {
-                    console.error("Failed to update block content with fallback method:", fallbackError);
-                    showMessage(this.i18n.requestFailed);
-                }
-            }
-            
-        } catch (error) {
-            console.error("Error in insertToSubdocument:", error);
-            showMessage(this.i18n.requestFailed);
-        }
-        
-    }
-    
-    private replaceSelectionWithLink(link: string) {
         const activeEditor = document.querySelector(".protyle-wysiwyg");
-        if (!activeEditor) {
-            console.error("No active editor found");
-            return;
-        }
-        
-        try {
-            // Use SiYuan's built-in API to replace selection with link
-            // The selection is already handled by the editor, we just need to insert the link text
+        if (activeEditor) {
             const selection = window.getSelection();
             if (selection && selection.rangeCount > 0) {
                 const range = selection.getRangeAt(0);
+                range.collapse(false);
                 
-                // Check if selection is within the active editor
-                let commonContainer = range.commonAncestorContainer;
-                if (commonContainer.nodeType === Node.TEXT_NODE) {
-                    commonContainer = commonContainer.parentElement;
+                const tempDiv = document.createElement("div");
+                tempDiv.innerHTML = `<p>${content}</p>`;
+                
+                while (tempDiv.firstChild) {
+                    range.insertNode(tempDiv.firstChild);
                 }
                 
-                // If selection is not within the active editor, create a new range at the end of the active editor
-                if (!commonContainer || !activeEditor.contains(commonContainer)) {
-                    console.error("Selection is not within the active editor, creating new range at end of active editor");
-                    // Find the last paragraph in the active editor
-                    const paragraphs = activeEditor.querySelectorAll(".p");
-                    const lastParagraph = paragraphs.length > 0 ? paragraphs[paragraphs.length - 1] : activeEditor;
-                    
-                    // Create a new range at the end of the last paragraph
-                    const newRange = document.createRange();
-                    newRange.selectNodeContents(lastParagraph);
-                    newRange.collapse(false);
-                    
-                    // Update the selection with the new range
-                    selection.removeAllRanges();
-                    selection.addRange(newRange);
-                    
-                    // Use the new range for insertion
-                    range = newRange;
-                }
-                
-                // Delete the selected text
-                range.deleteContents();
-                
-                // Insert the link text
-                const linkText = document.createTextNode(link);
-                range.insertNode(linkText);
-                
-                // Move cursor to end of inserted text
-                range.setStartAfter(linkText);
-                range.collapse(true);
+                range.collapse(false);
                 selection.removeAllRanges();
                 selection.addRange(range);
                 
-                // Trigger a more comprehensive update event to ensure the editor re-parses the content
-                const event = new CustomEvent("input", {
+                const inputEvent = new InputEvent("input", {
                     bubbles: true,
                     cancelable: true,
-                    composed: true,
-                    detail: { source: "click2fill-plugin" }
+                    composed: true
                 });
-                activeEditor.dispatchEvent(event);
-                
-                // Also trigger a keyup event which might help with parsing
-                const keyupEvent = new KeyboardEvent("keyup", {
-                    bubbles: true,
-                    cancelable: true,
-                    key: "Enter"
-                });
-                activeEditor.dispatchEvent(keyupEvent);
-                
+                activeEditor.dispatchEvent(inputEvent);
             }
-        } catch (error) {
-            console.error("Failed to replace selection with link:", error);
-            // Fallback to simple text insertion if the above method fails
-            this.fallbackReplaceSelection(link);
         }
     }
     
-    private fallbackReplaceSelection(link: string) {
-        const selection = window.getSelection();
-        if (!selection || selection.rangeCount === 0) {
-            return;
-        }
+    private showFloatingMenu(selectedText: string, selection: Selection) {
+        // 清除之前的浮动菜单
+        this.clearFloatingMenu();
         
+        // 获取选中区域的位置
         const range = selection.getRangeAt(0);
-        const container = range.commonAncestorContainer;
+        const rect = range.getBoundingClientRect();
         
-        // Find the closest block element
-        let blockElement = container;
-        while (blockElement && !(blockElement as HTMLElement).hasAttribute("data-node-id")) {
-            blockElement = blockElement.parentNode;
-            if (!blockElement) break;
+        // 过滤匹配的菜单
+        const matchedMenus = this.config.menus.filter(menuConfig => {
+            return this.isMenuMatch(menuConfig, selectedText);
+        });
+        
+        // 创建浮动菜单元素
+        const floatingMenu = document.createElement("div");
+        floatingMenu.id = "click2fill-floating-menu";
+        floatingMenu.style.position = "fixed";
+        floatingMenu.style.left = `${rect.left}px`;
+        floatingMenu.style.top = `${rect.bottom + 5}px`;
+        floatingMenu.style.zIndex = "10000";
+        floatingMenu.style.backgroundColor = "var(--b3-theme-background)";
+        floatingMenu.style.border = "1px solid var(--b3-theme-border)";
+        floatingMenu.style.borderRadius = "4px";
+        floatingMenu.style.boxShadow = "0 2px 8px rgba(0, 0, 0, 0.15)";
+        floatingMenu.style.padding = "4px";
+        floatingMenu.style.display = "flex";
+        floatingMenu.style.flexDirection = "column";
+        floatingMenu.style.minWidth = "150px";
+        floatingMenu.style.maxWidth = "300px";
+        // 添加tabindex使其能够获得焦点
+        floatingMenu.setAttribute("tabindex", "-1");
+        
+        // 确保菜单不会超出屏幕边界
+        const menuWidth = 200; // 预估菜单宽度
+        const viewportWidth = window.innerWidth;
+        if (rect.left + menuWidth > viewportWidth) {
+            floatingMenu.style.left = `${viewportWidth - menuWidth - 10}px`;
         }
         
-        if (blockElement && (blockElement as HTMLElement).hasAttribute("data-node-id")) {
-            const blockId = (blockElement as HTMLElement).getAttribute("data-node-id");
-            if (blockId) {
-                // Use SiYuan API to update the block content
-                this.updateBlockContent(blockId, link).catch(error => {
-                    console.error("Failed to update block content:", error);
-                    // Ultimate fallback: direct text insertion
-                    this.directTextInsertion(range, link);
+        // 确保菜单不会超出屏幕底部
+        const menuHeight = matchedMenus.length * 40 + 20; // 预估菜单高度
+        const viewportHeight = window.innerHeight;
+        if (rect.bottom + menuHeight > viewportHeight) {
+            floatingMenu.style.top = `${rect.top - menuHeight - 5}px`;
+        }
+        
+        if (matchedMenus.length > 0) {
+            matchedMenus.forEach(menu => {
+                const menuItem = document.createElement("div");
+                menuItem.style.padding = "8px 12px";
+                menuItem.style.cursor = "pointer";
+                menuItem.style.borderRadius = "4px";
+                menuItem.style.display = "flex";
+                menuItem.style.alignItems = "center";
+                menuItem.style.gap = "8px";
+                menuItem.title = menu.name;
+                
+                menuItem.innerHTML = `
+                    <svg class="b3-button__icon" style="width: 16px; height: 16px;"><use xlink:href="#${menu.icon}"></use></svg>
+                    <span>${menu.name}</span>
+                `;
+                
+                menuItem.addEventListener("mouseenter", () => {
+                    menuItem.style.backgroundColor = "var(--b3-theme-surface)";
                 });
-                return;
-            }
-        }
-        
-        // Ultimate fallback: direct text insertion
-        this.directTextInsertion(range, link);
-    }
-    
-    private directTextInsertion(range: Range, link: string) {
-        // Delete the selected text
-        range.deleteContents();
-        
-        // Create text node with the link
-        const textNode = document.createTextNode(link);
-        range.insertNode(textNode);
-        
-        // Move cursor to end of inserted text
-        range.setStartAfter(textNode);
-        range.collapse(true);
-        
-        // Update selection
-        const selection = window.getSelection();
-        if (selection) {
-            selection.removeAllRanges();
-            selection.addRange(range);
-        }
-        
-        // Trigger multiple events to ensure the editor updates
-        const activeElement = document.activeElement;
-        if (activeElement) {
-            // Trigger input event
-            activeElement.dispatchEvent(new InputEvent("input", {
-                bubbles: true,
-                cancelable: true,
-                composed: true
-            }));
-            
-            // Trigger change event
-            activeElement.dispatchEvent(new Event("change", {
-                bubbles: true,
-                cancelable: true
-            }));
-            
-            // Trigger blur and focus to force re-parsing
-            activeElement.blur();
-            setTimeout(() => activeElement.focus(), 0);
-        }
-    }
-    
-    private async updateBlockContent(blockId: string, content: string) {
-        try {
-            // Use SiYuan's API to update the block content
-            const response = await this.fetchPost("/api/block/updateBlock", {
-                id: blockId,
-                dataType: "markdown",
-                data: content
+                
+                menuItem.addEventListener("mouseleave", () => {
+                    menuItem.style.backgroundColor = "transparent";
+                });
+                
+                menuItem.addEventListener("click", async () => {
+                    this.clearFloatingMenu();
+                    this.dialogState.selectedText = selectedText;
+                    this.dialogState.selectedMenu = menu;
+                    this.dialogState.step = "send";
+                    this.prepareRequestData();
+                    await this.showSidebarDialog();
+                    // 延迟一下确保对话框已显示，然后自动发送请求
+                    setTimeout(async () => {
+                        await this.sendRequestAndShowResult();
+                    }, 100);
+                });
+                
+                floatingMenu.appendChild(menuItem);
             });
-            return response;
-        } catch (error) {
-            console.error("Failed to update block content:", error);
-            throw error;
+        } else {
+            const noMatchItem = document.createElement("div");
+            noMatchItem.style.padding = "8px 12px";
+            noMatchItem.style.color = "var(--b3-theme-on-surface)";
+            noMatchItem.style.fontSize = "12px";
+            noMatchItem.textContent = "没有匹配的接口";
+            floatingMenu.appendChild(noMatchItem);
+        }
+        
+        // 添加到文档
+        document.body.appendChild(floatingMenu);
+        
+        // 让菜单获得焦点，以便键盘事件能够被正确处理
+        floatingMenu.focus();
+        
+        // 添加键盘事件处理，支持方向键选择
+        this.setupKeyboardNavigation(floatingMenu, matchedMenus);
+        
+        // 点击其他地方关闭菜单
+        const handleClickOutside = (event: MouseEvent) => {
+            try {
+                if (!floatingMenu.contains(event.target as Node)) {
+                    this.clearFloatingMenu();
+                }
+            } catch (error) {
+                console.error("Error in click outside handler:", error);
+                // 发生错误时也清理菜单
+                this.clearFloatingMenu();
+            }
+        };
+        
+        setTimeout(() => {
+            document.addEventListener("click", handleClickOutside, { once: true });
+        }, 100);
+    }
+    
+    private clearFloatingMenu() {
+        const existingMenu = document.getElementById("click2fill-floating-menu");
+        if (existingMenu) {
+            existingMenu.remove();
         }
     }
     
-    private async appendContentToDocument(docId: string, content: string) {
-        
+    private handleDocumentClick(event: MouseEvent) {
         try {
-            await this.fetchPost("/api/block/appendBlock", {
-                id: docId,
-                dataType: "markdown",
-                data: content
-            });
+            const floatingMenu = document.getElementById("click2fill-floating-menu");
+            if (floatingMenu && !floatingMenu.contains(event.target as Node)) {
+                this.clearFloatingMenu();
+            }
         } catch (error) {
-            console.error("Error in appendContentToDocument:", error);
-            throw new Error("Failed to append content to document");
+            console.error("Error in handleDocumentClick:", error);
         }
-        
     }
     
-    private async fetchPost(url: string, data: any): Promise<any> {
+    private setupKeyboardNavigation(floatingMenu: HTMLElement, matchedMenus: MenuConfig[]) {
+        if (matchedMenus.length === 0) return;
         
-        try {
-            const response = await fetch(url, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify(data)
-            });
-            
-            
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            
-            const result = await response.json();
-            
-            // Check if response has a data property (Siyuan API format)
-            if (result && result.code === 0 && result.data !== undefined) {
-                return result.data;
-            }
-            
-            return result;
-        } catch (error) {
-            console.error("Error in fetchPost:", error);
-            throw error;
+        const menuItems = floatingMenu.querySelectorAll("div[title]");
+        let currentIndex = 0;
+        
+        // 高亮第一个菜单项
+        if (menuItems.length > 0) {
+            (menuItems[0] as HTMLElement).style.backgroundColor = "var(--b3-theme-surface)";
         }
+        
+        const handleKeydown = (event: KeyboardEvent) => {
+            // 检查事件是否来自菜单或文档
+            // 即使焦点在菜单上，也处理键盘事件
+            switch (event.key) {
+                case "ArrowDown":
+                case "ArrowUp":
+                case "Enter":
+                case "Escape":
+                    // 阻止所有相关按键的默认行为
+                    event.preventDefault();
+                    event.stopPropagation();
+                    
+                    switch (event.key) {
+                        case "ArrowDown":
+                            // 移除当前高亮
+                            if (currentIndex < menuItems.length) {
+                                (menuItems[currentIndex] as HTMLElement).style.backgroundColor = "transparent";
+                            }
+                            // 移动到下一个
+                            currentIndex = (currentIndex + 1) % menuItems.length;
+                            // 高亮新菜单项
+                            (menuItems[currentIndex] as HTMLElement).style.backgroundColor = "var(--b3-theme-surface)";
+                            // 滚动到可视区域
+                            (menuItems[currentIndex] as HTMLElement).scrollIntoView({ behavior: "smooth", block: "nearest" });
+                            break;
+                        case "ArrowUp":
+                            // 移除当前高亮
+                            if (currentIndex < menuItems.length) {
+                                (menuItems[currentIndex] as HTMLElement).style.backgroundColor = "transparent";
+                            }
+                            // 移动到上一个
+                            currentIndex = (currentIndex - 1 + menuItems.length) % menuItems.length;
+                            // 高亮新菜单项
+                            (menuItems[currentIndex] as HTMLElement).style.backgroundColor = "var(--b3-theme-surface)";
+                            // 滚动到可视区域
+                            (menuItems[currentIndex] as HTMLElement).scrollIntoView({ behavior: "smooth", block: "nearest" });
+                            break;
+                        case "Enter":
+                            // 触发当前菜单项的点击事件
+                            if (currentIndex < menuItems.length) {
+                                (menuItems[currentIndex] as HTMLElement).click();
+                            }
+                            break;
+                        case "Escape":
+                            // 关闭菜单
+                            this.clearFloatingMenu();
+                            break;
+                    }
+                    break;
+            }
+        };
+        
+        // 添加键盘事件监听器到文档，确保即使焦点不在菜单上也能捕获按键
+        document.addEventListener("keydown", handleKeydown, { capture: true });
+        
+        // 清理事件监听器
+        const cleanup = () => {
+            document.removeEventListener("keydown", handleKeydown, { capture: true });
+        };
+        
+        // 当菜单被移除时清理
+        const observer = new MutationObserver((mutations) => {
+            mutations.forEach((mutation) => {
+                mutation.removedNodes.forEach((node) => {
+                    if (node === floatingMenu) {
+                        cleanup();
+                        observer.disconnect();
+                    }
+                });
+            });
+        });
+        
+        observer.observe(document.body, { childList: true });
     }
     
     private async openConfigurePanel() {
-        // 确保配置已加载
+        // 使用字符串拼接而不是模板字符串，避免解析占位符
+        const htmlContent = 
+            '<div class="plugin-click2fill__config-panel" style="padding: 20px; max-height: 600px; overflow-y: auto; background-color: var(--b3-theme-background); color: var(--b3-theme-on-surface);">' +
+                '<h2 style="margin-top: 0; margin-bottom: 16px; color: var(--b3-theme-on-surface);">配置接口</h2>' +
+                '<p style="margin-bottom: 20px; color: var(--b3-theme-on-surface-light);">添加和管理 Click2Fill 接口</p>' +
+                '<div style="display: flex; gap: 8px; margin-bottom: 20px;">' +
+                    '<button id="addMenu" class="b3-button b3-button--primary">' +
+                        '<svg class="b3-button__icon"><use xlink:href="#iconAdd"></use></svg>' +
+                        "<span>添加接口</span>" +
+                    "</button>" +
+                    '<button id="exportMenus" class="b3-button">' +
+                        '<svg class="b3-button__icon"><use xlink:href="#iconDownload"></use></svg>' +
+                        "<span>导出接口</span>" +
+                    "</button>" +
+                    '<button id="importMenus" class="b3-button">' +
+                        '<svg class="b3-button__icon"><use xlink:href="#iconUpload"></use></svg>' +
+                        "<span>导入接口</span>" +
+                    "</button>" +
+                "</div>" +
+                '<div id="menusList" style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px;"></div>' +
+                '<div id="menuEditor" style="display: none; margin-top: 24px; padding-top: 24px; border-top: 1px solid var(--b3-theme-border);"></div>' +
+            "</div>";
+        
+        const dialog = new Dialog({
+            title: "配置接口",
+            content: htmlContent,
+            width: "900px",
+            height: "750px"
+        });
+        
+        // 等待对话框显示，然后加载菜单列表
+        setTimeout(async () => {
+            const menusList = dialog.element.querySelector("#menusList");
+            if (menusList) {
+                await this.loadMenusList(menusList, dialog);
+                
+                const addMenuBtn = dialog.element.querySelector("#addMenu");
+                if (addMenuBtn) {
+                    addMenuBtn.addEventListener("click", async () => {
+                        await this.addNewMenu();
+                        const menusListElement = dialog.element.querySelector("#menusList");
+                        if (menusListElement) {
+                            await this.loadMenusList(menusListElement, dialog);
+                        }
+                    });
+                }
+                
+                // 导出接口按钮事件
+                const exportMenusBtn = dialog.element.querySelector("#exportMenus");
+                if (exportMenusBtn) {
+                    exportMenusBtn.addEventListener("click", async () => {
+                        await this.exportMenus();
+                    });
+                }
+                
+                // 导入接口按钮事件
+                const importMenusBtn = dialog.element.querySelector("#importMenus");
+                if (importMenusBtn) {
+                    importMenusBtn.addEventListener("click", async () => {
+                        await this.importMenus(dialog);
+                    });
+                }
+            }
+        }, 100);
+    }
+    
+    private async loadMenusList(container: Element, dialog: any) {
+        container.innerHTML = "";
+        
         if (!this.config || !Array.isArray(this.config.menus)) {
             await this.loadConfig();
         }
         
-        const dialog = new Dialog({
-            title: this.i18n.configure,
-            content: `
-                <div class="plugin-click2fill__config">
-                    <div class="plugin-click2fill__config-header">
-                        <h3>${this.i18n.click2fill} ${this.i18n.configure}</h3>
-                        <div class="plugin-click2fill__config-buttons">
-                            <button id="plugin-click2fill__import-menu" class="b3-button b3-button--outline b3-button--small" style="margin-right: 8px;">
-                                导入
-                            </button>
-                            <button id="plugin-click2fill__export-menu" class="b3-button b3-button--outline b3-button--small" style="margin-right: 8px;">
-                                导出
-                            </button>
-                            <button id="plugin-click2fill__add-menu" class="b3-button b3-button--outline b3-button--small">
-                                新增请求
-                            </button>
-                        </div>
-                    </div>
-                    <div id="plugin-click2fill__menu-list" class="plugin-click2fill__menu-list">
-                        ${this.renderMenuList()}
-                    </div>
-                </div>
-            `,
-            width: 700,
-            height: 500,
-            destroyCallback: () => {
+        if (this.config.menus.length === 0) {
+            container.innerHTML = '<div style="padding: 20px; text-align: center; color: var(--b3-theme-on-surface-light);">暂无配置的接口，请点击上方按钮添加</div>';
+            return;
+        }
+        
+        this.config.menus.forEach(menu => {
+            const menuItem = document.createElement("div");
+            menuItem.style.display = "flex";
+            menuItem.style.alignItems = "center";
+            menuItem.style.justifyContent = "space-between";
+            menuItem.style.padding = "12px";
+            menuItem.style.border = "1px solid var(--b3-theme-border)";
+            menuItem.style.borderRadius = "6px";
+            menuItem.style.backgroundColor = "var(--b3-theme-surface)";
+            
+            menuItem.innerHTML = 
+                '<div style="display: flex; align-items: center; gap: 12px;">' +
+                    '<svg class="b3-button__icon" style="width: 16px; height: 16px;"><use xlink:href="#' + menu.icon + '"></use></svg>' +
+                    "<div>" +
+                        '<h4 style="margin: 0; color: var(--b3-theme-on-surface);">' + menu.name + "</h4>" +
+                        '<p style="margin: 4px 0 0 0; font-size: 12px; color: var(--b3-theme-on-surface-light);">' + menu.url + "</p>" +
+                    "</div>" +
+                "</div>" +
+                '<div style="display: flex; gap: 8px;">' +
+                    '<button class="b3-button b3-button--small edit-menu" data-id="' + menu.id + '">' +
+                        '<svg class="b3-button__icon"><use xlink:href="#iconSettings"></use></svg>' +
+                        "<span>编辑</span>" +
+                    "</button>" +
+                    '<button class="b3-button b3-button--small b3-button--warning delete-menu" data-id="' + menu.id + '">' +
+                        '<svg class="b3-button__icon"><use xlink:href="#iconTrash"></use></svg>' +
+                        "<span>删除</span>" +
+                    "</button>" +
+                "</div>";
+            
+            menuItem.querySelector(".edit-menu").addEventListener("click", async () => {
+                const menuEditor = dialog.element.querySelector("#menuEditor");
+                if (menuEditor) {
+                    await this.showMenuEditor(menuEditor, menu);
+                }
+            });
+            
+            menuItem.querySelector(".delete-menu").addEventListener("click", async () => {
+                await this.deleteMenu(menu.id);
+                await this.loadMenusList(container, dialog);
+            });
+            
+            container.appendChild(menuItem);
+        });
+    }
+    
+    private async showMenuEditor(container: Element, menu: MenuConfig) {
+        // 使用字符串拼接而不是模板字符串，避免解析占位符
+        const headersJson = JSON.stringify(menu.headers, null, 2).replace(/`/g, "\\`");
+        // 为 Params 设置默认值，如果为空则使用默认 JSON
+        let paramsJson = "";
+        if (Object.keys(menu.params || {}).length === 0) {
+            // 使用有效的 JSON 格式，确保 ${selectText} 作为字符串值
+            paramsJson = '{"text": "${selectText}"}';
+        } else {
+            paramsJson = JSON.stringify(menu.params, null, 2);
+        }
+        const keywordValue = (menu.keyword || "").replace(/`/g, "\\`");
+        const regexValue = (menu.regex || "").replace(/`/g, "\\`");
+        // 确定匹配方式
+        const matchType = menu.keyword ? "keyword" : (menu.regex ? "regex" : "none");
+        
+        // 构建HTML内容
+        let htmlContent = "";
+        htmlContent += '<h3 style="margin-top: 0; margin-bottom: 20px; color: var(--b3-theme-on-surface);">编辑接口: ' + menu.name + "</h3>";
+        htmlContent += '<div style="margin-bottom: 16px;">';
+        htmlContent += '<label style="display: block; margin-bottom: 8px; color: var(--b3-theme-on-surface);">名称: </label>';
+        htmlContent += '<input type="text" value="' + menu.name + '" style="width: 100%; padding: 8px; border: 1px solid var(--b3-theme-border); border-radius: 4px; background-color: var(--b3-theme-surface-light); color: var(--b3-theme-on-surface);" class="menu-name" data-id="' + menu.id + '">';
+        htmlContent += "</div>";
+        htmlContent += '<div style="margin-bottom: 16px;">';
+        htmlContent += '<label style="display: block; margin-bottom: 8px; color: var(--b3-theme-on-surface);">URL: </label>';
+        htmlContent += '<input type="text" value="' + menu.url + '" style="width: 100%; padding: 8px; border: 1px solid var(--b3-theme-border); border-radius: 4px; background-color: var(--b3-theme-surface-light); color: var(--b3-theme-on-surface);" class="menu-url" data-id="' + menu.id + '">';
+        htmlContent += "</div>";
+        htmlContent += '<div style="margin-bottom: 16px;">';
+        htmlContent += '<label style="display: block; margin-bottom: 8px; color: var(--b3-theme-on-surface);">Method: </label>';
+        htmlContent += '<select style="width: 100%; padding: 8px; border: 1px solid var(--b3-theme-border); border-radius: 4px; background-color: var(--b3-theme-surface-light); color: var(--b3-theme-on-surface);" class="menu-method" data-id="' + menu.id + '">';
+        htmlContent += '<option value="POST"' + (menu.method === "POST" ? " selected" : "") + '>POST</option>';
+        htmlContent += '<option value="GET"' + (menu.method === "GET" ? " selected" : "") + '>GET</option>';
+        htmlContent += "</select>";
+        htmlContent += "</div>";
+        htmlContent += '<div style="margin-bottom: 16px;">';
+        htmlContent += '<label style="display: block; margin-bottom: 8px; color: var(--b3-theme-on-surface);">Params: </label>';
+        htmlContent += '<textarea style="width: 100%; padding: 8px; border: 1px solid var(--b3-theme-border); border-radius: 4px; background-color: var(--b3-theme-surface-light); color: var(--b3-theme-on-surface); height: 100px;" class="menu-params" data-id="' + menu.id + '" placeholder="{\n  \"text\": \"\\${selectText}\",\n  \"type\": \"info\"\n}">' + paramsJson + "</textarea>";
+        htmlContent += "</div>";
+        htmlContent += "<!-- 高级选项 -->";
+        htmlContent += '<div style="margin-top: 24px; margin-bottom: 16px; border-top: 1px solid var(--b3-theme-border); padding-top: 16px;">';
+        htmlContent += '<div style="display: flex; justify-content: space-between; align-items: center; cursor: pointer;" id="advancedOptionsToggle">';
+        htmlContent += '<h4 style="margin: 0; color: var(--b3-theme-on-surface);">高级选项</h4>';
+        htmlContent += '<svg class="b3-button__icon" style="width: 16px; height: 16px; transition: transform 0.2s;" id="advancedOptionsIcon"><use xlink:href="#iconExpand"></use></svg>';
+        htmlContent += "</div>";
+        htmlContent += '<div id="advancedOptionsContent" style="display: none; margin-top: 16px;">';
+        htmlContent += '<div style="margin-bottom: 16px;">';
+        htmlContent += '<label style="display: block; margin-bottom: 8px; color: var(--b3-theme-on-surface);">Headers: </label>';
+        htmlContent += '<textarea style="width: 100%; padding: 8px; border: 1px solid var(--b3-theme-border); border-radius: 4px; background-color: var(--b3-theme-surface-light); color: var(--b3-theme-on-surface); height: 100px;" class="menu-headers" data-id="' + menu.id + '" placeholder="{\n  \"Content-Type\": \"application/json\",\n  \"Authorization\": \"Bearer token\"\n}">' + headersJson + '</textarea>';
+        htmlContent += '</div>';
+        htmlContent += '<div style="margin-bottom: 16px;">';
+        htmlContent += '<label style="display: block; margin-bottom: 8px; color: var(--b3-theme-on-surface);">响应模板: </label>';
+        htmlContent += '<textarea style="width: 100%; padding: 8px; border: 1px solid var(--b3-theme-border); border-radius: 4px; background-color: var(--b3-theme-surface-light); color: var(--b3-theme-on-surface); height: 120px;" class="menu-template" data-id="' + menu.id + '" placeholder="# 响应结果\n\n## 匹配列表\n\${each(matches.matchlist as item)}\n- \${item.content}\n\${end}\n\n## 原始响应\n\${data}">' + (menu.template || '') + '</textarea>';
+        htmlContent += '<p style="margin-top: 4px; color: var(--b3-theme-on-surface-light); font-size: 12px;">使用模板定制化显示响应数据：</p>';
+        htmlContent += '<ul style="margin-top: 4px; margin-bottom: 8px; color: var(--b3-theme-on-surface-light); font-size: 12px; padding-left: 20px;">';
+        htmlContent += '<li>显示整个响应: \${data}</li>';
+        htmlContent += '<li>显示选中的文本: \${selectText}</li>';
+        htmlContent += '<li>显示单个字段: \${matches.message}</li>';
+        htmlContent += '<li>显示数组元素: \${matches.matchlist[0].content}</li>';
+        htmlContent += '<li>遍历数组: \${each(matches.matchlist as item)}\n- \${item.content}\n\${end}</li>';
+        htmlContent += '</ul>';
+        htmlContent += '<p style="margin-top: 4px; color: var(--b3-theme-on-surface-light); font-size: 12px;">示例：只显示匹配列表中的内容字段</p>';
+        htmlContent += '<pre style="margin-top: 4px; margin-bottom: 4px; color: var(--b3-theme-on-surface-light); font-size: 12px; background-color: var(--b3-theme-surface-light); padding: 8px; border-radius: 4px;">\${each(matches.matchlist as item)}\n- \${item.content}\n\${end}</pre>';
+        htmlContent += '</div>';
+
+        htmlContent += '<p style="margin-bottom: 16px; color: var(--b3-theme-on-surface-light); font-size: 14px;">这些选项用于控制菜单何时显示：</p>';
+        htmlContent += '<div style="margin-bottom: 16px;">';
+        htmlContent += '<label style="display: block; margin-bottom: 8px; color: var(--b3-theme-on-surface);">匹配方式: </label>';
+        htmlContent += '<select style="width: 100%; padding: 8px; border: 1px solid var(--b3-theme-border); border-radius: 4px; background-color: var(--b3-theme-surface-light); color: var(--b3-theme-on-surface);" class="menu-matchType" data-id="' + menu.id + '">';
+        htmlContent += '<option value="none"' + (matchType === "none" ? " selected" : "") + ">无（始终显示）</option>";
+        htmlContent += '<option value="keyword"' + (matchType === "keyword" ? " selected" : "") + ">关键字</option>";
+        htmlContent += '<option value="regex"' + (matchType === "regex" ? " selected" : "") + ">正则表达式</option>";
+        htmlContent += "</select>";
+        htmlContent += "</div>";
+        htmlContent += '<div id="keywordSection" style="margin-bottom: 16px;' + (matchType !== "keyword" ? " display: none;" : "") + '">';
+        htmlContent += '<label style="display: block; margin-bottom: 8px; color: var(--b3-theme-on-surface);">关键字: </label>';
+        htmlContent += '<input type="text" value="' + keywordValue + '" style="width: 100%; padding: 8px; border: 1px solid var(--b3-theme-border); border-radius: 4px; background-color: var(--b3-theme-surface-light); color: var(--b3-theme-on-surface);" class="menu-keyword" data-id="' + menu.id + '" placeholder="多个关键字用逗号分隔，例如：API,请求,数据">';
+        htmlContent += '<p style="margin-top: 4px; color: var(--b3-theme-on-surface-light); font-size: 12px;">当选中的文本包含这些关键字时，菜单会显示</p>';
+        htmlContent += "</div>";
+        htmlContent += '<div id="regexSection" style="margin-bottom: 16px;' + (matchType !== "regex" ? " display: none;" : "") + '">';
+        htmlContent += '<label style="display: block; margin-bottom: 8px; color: var(--b3-theme-on-surface);">正则表达式: </label>';
+        htmlContent += '<input type="text" value="' + regexValue + '" style="width: 100%; padding: 8px; border: 1px solid var(--b3-theme-border); border-radius: 4px; background-color: var(--b3-theme-surface-light); color: var(--b3-theme-on-surface);" class="menu-regex" data-id="' + menu.id + '" placeholder="JavaScript 正则表达式，例如：^\\d+$ (匹配数字)">';
+        htmlContent += '<p style="margin-top: 4px; color: var(--b3-theme-on-surface-light); font-size: 12px;">当选中的文本匹配此正则表达式时，菜单会显示</p>';
+        htmlContent += "</div>";
+        htmlContent += "</div>";
+        htmlContent += "</div>";
+        htmlContent += '<div style="display: flex; gap: 12px; margin-top: 24px;">';
+        htmlContent += '<button class="b3-button" id="cancelEdit">';
+        htmlContent += '<svg class="b3-button__icon"><use xlink:href="#iconBack"></use></svg>';
+        htmlContent += "<span>返回列表</span>";
+        htmlContent += "</button>";
+        htmlContent += '<button class="b3-button b3-button--primary" id="saveMenu">';
+        htmlContent += '<svg class="b3-button__icon"><use xlink:href="#iconSave"></use></svg>';
+        htmlContent += "<span>保存接口</span>";
+        htmlContent += "</button>";
+        htmlContent += "</div>";
+        
+        container.innerHTML = htmlContent;
+        
+        // 显示编辑器
+        container.style.display = "block";
+        
+        // 添加高级选项折叠功能
+        const toggle = container.querySelector("#advancedOptionsToggle");
+        const content = container.querySelector("#advancedOptionsContent");
+        const icon = container.querySelector("#advancedOptionsIcon");
+        
+        if (toggle && content && icon) {
+            toggle.addEventListener("click", () => {
+                if (content.style.display === "none") {
+                    content.style.display = "block";
+                    icon.style.transform = "rotate(90deg)";
+                } else {
+                    content.style.display = "none";
+                    icon.style.transform = "rotate(0deg)";
+                }
+            });
+        }
+        
+        // 添加匹配方式切换功能
+        const matchTypeSelect = container.querySelector(".menu-matchType") as HTMLSelectElement;
+        const keywordSection = container.querySelector("#keywordSection");
+        const regexSection = container.querySelector("#regexSection");
+        
+        if (matchTypeSelect && keywordSection && regexSection) {
+            matchTypeSelect.addEventListener("change", () => {
+                const selectedType = matchTypeSelect.value;
+                if (selectedType === "keyword") {
+                    keywordSection.style.display = "block";
+                    regexSection.style.display = "none";
+                } else if (selectedType === "regex") {
+                    keywordSection.style.display = "none";
+                    regexSection.style.display = "block";
+                } else {
+                    keywordSection.style.display = "none";
+                    regexSection.style.display = "none";
+                }
+            });
+        }
+        
+        // 添加事件监听器
+        // 添加 blur 事件监听器，自动格式化 JSON
+        const headersElement = container.querySelector(".menu-headers") as HTMLTextAreaElement;
+        if (headersElement) {
+            headersElement.addEventListener("blur", (e) => {
+                try {
+                    const value = (e.target as HTMLTextAreaElement).value;
+                    if (value) {
+                        const parsed = JSON.parse(value);
+                        const formatted = JSON.stringify(parsed, null, 2);
+                        (e.target as HTMLTextAreaElement).value = formatted;
+                    }
+                } catch (error) {
+                    // 格式无效，不进行格式化
+                }
+            });
+        }
+        
+        const paramsElement = container.querySelector(".menu-params") as HTMLTextAreaElement;
+        paramsElement.addEventListener("blur", (e) => {
+            try {
+                const value = (e.target as HTMLTextAreaElement).value;
+                if (value) {
+                    const parsed = JSON.parse(value);
+                    const formatted = JSON.stringify(parsed, null, 2);
+                    (e.target as HTMLTextAreaElement).value = formatted;
+                }
+            } catch (error) {
+                // 格式无效，不进行格式化
             }
         });
         
-        setTimeout(() => {
-            this.bindConfigPanelEvents(dialog.element);
-        }, 0);
-    }
-    
-    private renderMenuList(): string {
-        if (!this.config.menus || this.config.menus.length === 0) {
-            return `<div class="plugin-click2fill__empty">${this.i18n.noMenusConfigured}</div>`;
-        }
-        
-        return this.config.menus.map(menu => `
-            <div class="plugin-click2fill__menu-item" data-id="${menu.id}">
-                <div class="plugin-click2fill__menu-info">
-                    <div class="plugin-click2fill__menu-name">${menu.name}</div>
-                    <div class="plugin-click2fill__menu-url">${menu.url}</div>
-                </div>
-                <div class="plugin-click2fill__menu-actions">
-                    <button class="b3-button b3-button--outline b3-button--small plugin-click2fill__edit-menu">
-                        ${this.i18n.editMenu}
-                    </button>
-                    <button class="b3-button b3-button--outline b3-button--small plugin-click2fill__delete-menu">
-                        ${this.i18n.deleteMenu}
-                    </button>
-                </div>
-            </div>
-        `).join("");
-    }
-    
-    private bindConfigPanelEvents(dialogElement: HTMLElement) {
-        const importMenuButton = dialogElement.querySelector("#plugin-click2fill__import-menu") as HTMLElement;
-        if (importMenuButton) {
-            importMenuButton.addEventListener("click", () => {
-                this.importMenus();
-            });
-        }
-        
-        const exportMenuButton = dialogElement.querySelector("#plugin-click2fill__export-menu") as HTMLElement;
-        exportMenuButton.addEventListener("click", () => {
-            this.exportMenus();
-        });
-        
-        const addMenuButton = dialogElement.querySelector("#plugin-click2fill__add-menu") as HTMLElement;
-        addMenuButton.addEventListener("click", () => {
-            this.openMenuEditDialog(null);
-        });
-        
-        dialogElement.querySelectorAll(".plugin-click2fill__edit-menu").forEach(button => {
-            button.addEventListener("click", (e) => {
-                const menuElement = (e.target as HTMLElement).closest(".plugin-click2fill__menu-item");
-                if (menuElement) {
-                    const menuId = menuElement.getAttribute("data-id");
-                    const menu = this.config.menus.find(m => m.id === menuId);
-                    if (menu) {
-                        this.openMenuEditDialog(menu);
+        // 保存按钮事件
+        const saveBtn = container.querySelector("#saveMenu");
+        if (saveBtn) {
+            saveBtn.addEventListener("click", async () => {
+                try {
+                    // 保存所有字段
+                    this.updateMenuProperty(menu.id, "name", (container.querySelector(".menu-name") as HTMLInputElement).value);
+                    this.updateMenuProperty(menu.id, "url", (container.querySelector(".menu-url") as HTMLInputElement).value);
+                    this.updateMenuProperty(menu.id, "method", (container.querySelector(".menu-method") as HTMLSelectElement).value);
+                    
+                    try {
+                        const headersValue = headersElement ? headersElement.value : "{}";
+                        this.updateMenuProperty(menu.id, "headers", JSON.parse(headersValue));
+                    } catch (error) {
+                        showMessage("无效的 Headers JSON 格式");
+                        return;
                     }
+                    
+                    try {
+                        this.updateMenuProperty(menu.id, "params", JSON.parse((container.querySelector(".menu-params") as HTMLTextAreaElement).value));
+                    } catch (error) {
+                        showMessage("无效的 Params JSON 格式");
+                        return;
+                    }
+                    
+                    // 保存模板
+                    const templateElement = container.querySelector(".menu-template") as HTMLTextAreaElement;
+                    if (templateElement) {
+                        this.updateMenuProperty(menu.id, "template", templateElement.value);
+                    }
+                    
+                    // 处理匹配方式
+                    const selectedMatchType = (container.querySelector(".menu-matchType") as HTMLSelectElement).value;
+                    if (selectedMatchType === "keyword") {
+                        this.updateMenuProperty(menu.id, "keyword", (container.querySelector(".menu-keyword") as HTMLInputElement).value);
+                        this.updateMenuProperty(menu.id, "regex", "");
+                    } else if (selectedMatchType === "regex") {
+                        this.updateMenuProperty(menu.id, "regex", (container.querySelector(".menu-regex") as HTMLInputElement).value);
+                        this.updateMenuProperty(menu.id, "keyword", "");
+                    } else {
+                        this.updateMenuProperty(menu.id, "keyword", "");
+                        this.updateMenuProperty(menu.id, "regex", "");
+                    }
+                    
+                    showMessage("接口配置已保存");
+                    // 保存成功后，自动返回到接口列表
+                    container.style.display = "none";
+                } catch (error) {
+                    showMessage("保存失败，请检查输入格式");
                 }
             });
-        });
+        }
         
-        dialogElement.querySelectorAll(".plugin-click2fill__delete-menu").forEach(button => {
-            button.addEventListener("click", (e) => {
-                const menuElement = (e.target as HTMLElement).closest(".plugin-click2fill__menu-item");
-                if (menuElement) {
-                    const menuId = menuElement.getAttribute("data-id");
-                    const menu = this.config.menus.find(m => m.id === menuId);
-                    if (menu) {
-                        this.deleteMenu(menu);
-                    }
-                }
+        // 取消按钮事件
+        const cancelBtn = container.querySelector("#cancelEdit");
+        if (cancelBtn) {
+            cancelBtn.addEventListener("click", () => {
+                container.style.display = "none";
             });
-        });
+        }
     }
     
-    private exportMenus() {
-        const exportData = {
-            version: "1.0.0",
-            exportTime: new Date().toISOString(),
-            menus: this.config.menus
+    private async addNewMenu() {
+        const menuId = `menu-${Date.now()}`;
+        const newMenu = {
+            id: menuId,
+            name: "新接口",
+            icon: "iconFace",
+            url: "",
+            method: "POST",
+            headers: {},
+            params: {},
+            responseType: "json",
+            template: "",
+            keyword: "",
+            regex: "",
+            insertionMethod: "current"
         };
         
-        const jsonString = JSON.stringify(exportData, null, 2);
-        const blob = new Blob([jsonString], { type: "application/json" });
+        if (!this.config) {
+            this.config = {
+                menus: [],
+                defaultMenu: "",
+                knowledge: []
+            };
+        }
         
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `click2fill-menus-${new Date().toISOString().slice(0, 10)}.json`;
-        
-        document.body.appendChild(a);
-        a.click();
-        
-        setTimeout(() => {
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-        }, 100);
-        
-        showMessage("菜单配置已成功导出");
+        this.config.menus.push(newMenu);
+        await this.saveConfig();
     }
     
-    private importMenus() {
-        // Create a file input element
-        const input = document.createElement("input");
-        input.type = "file";
-        input.accept = ".json";
+    private async deleteMenu(menuId: string) {
+        if (!this.config || !Array.isArray(this.config.menus)) {
+            return;
+        }
         
-        // Handle file selection
-        input.onchange = (e: Event) => {
-            const target = e.target as HTMLInputElement;
-            const file = target.files?.[0];
-            if (file) {
-                const reader = new FileReader();
+        this.config.menus = this.config.menus.filter(menu => menu.id !== menuId);
+        await this.saveConfig();
+    }
+    
+    private async exportMenus() {
+        try {
+            // 准备导出的数据
+            const exportData = {
+                version: "1.0",
+                exportTime: new Date().toISOString(),
+                menus: this.config.menus
+            };
+            
+            // 将数据转换为 JSON 字符串
+            const jsonString = JSON.stringify(exportData, null, 2);
+            
+            // 创建 Blob 对象
+            const blob = new Blob([jsonString], { type: "application/json" });
+            
+            // 创建下载链接
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `click2fill-export-${new Date().toISOString().split("T")[0]}.json`;
+            
+            // 触发下载
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            
+            // 释放 URL 对象
+            URL.revokeObjectURL(url);
+            
+            showMessage("接口配置导出成功");
+        } catch (error) {
+            console.error("导出接口失败:", error);
+            showMessage("导出接口失败，请检查控制台错误");
+        }
+    }
+    
+    private async importMenus(dialog: any) {
+        try {
+            // 创建文件输入元素
+            const input = document.createElement("input");
+            input.type = "file";
+            input.accept = ".json";
+            
+            // 监听文件选择事件
+            input.addEventListener("change", async (e) => {
+                const target = e.target as HTMLInputElement;
+                if (!target.files || target.files.length === 0) {
+                    return;
+                }
                 
-                reader.onload = (event) => {
+                const file = target.files[0];
+                
+                // 读取文件内容
+                const reader = new FileReader();
+                reader.onload = async (event) => {
                     try {
-                        const content = event.target?.result as string;
-                        const importData = JSON.parse(content);
+                        const result = event.target?.result as string;
+                        const importData = JSON.parse(result);
                         
-                        // Validate imported data
-                        if (importData.menus && Array.isArray(importData.menus)) {
-                            // Import menus
-                            this.config.menus = importData.menus;
-                            this.saveConfig();
-                            
-                            // Update menu list
-                            const menuListElement = document.getElementById("plugin-click2fill__menu-list");
-                            if (menuListElement) {
-                                menuListElement.innerHTML = this.renderMenuList();
-                                this.bindConfigPanelEvents(menuListElement.closest(".plugin-click2fill__config") as HTMLElement);
-                            }
-                            
-                            showMessage("菜单配置已成功导入");
-                        } else {
-                            showMessage("导入失败：无效的菜单配置文件");
+                        // 验证导入数据格式
+                        if (!importData.menus || !Array.isArray(importData.menus)) {
+                            showMessage("无效的导入文件格式，缺少 menus 数组");
+                            return;
                         }
+                        
+                        // 导入菜单配置
+                        // 为每个导入的菜单生成新的 ID，避免冲突
+                        const importedMenus = importData.menus.map((menu: any) => ({
+                            ...menu,
+                            id: `menu-${Date.now()}-${Math.floor(Math.random() * 1000)}`
+                        }));
+                        
+                        // 添加到当前配置
+                        this.config.menus.push(...importedMenus);
+                        await this.saveConfig();
+                        
+                        // 重新加载菜单列表
+                        const menusList = dialog.element.querySelector("#menusList");
+                        if (menusList) {
+                            await this.loadMenusList(menusList, dialog);
+                        }
+                        
+                        showMessage(`成功导入 ${importedMenus.length} 个接口配置`);
                     } catch (error) {
-                        showMessage("导入失败：JSON解析错误");
+                        console.error("解析导入文件失败:", error);
+                        showMessage("解析导入文件失败，请确保文件是有效的 JSON 格式");
                     }
                 };
-                
+                reader.onerror = () => {
+                    showMessage("读取文件失败");
+                };
                 reader.readAsText(file);
-            }
-        };
-        
-        // Trigger file selection dialog
-        input.click();
-    }
-    
-    private openMenuEditDialog(menu: MenuConfig | null) {
-        const isEdit = menu !== null;
-        const dialog = new Dialog({
-            title: isEdit ? this.i18n.editMenu : this.i18n.addMenu,
-            content: `
-                <div class="plugin-click2fill__menu-edit">
-                    <div class="plugin-click2fill__form-item" style="display: block; width: 100%; margin-bottom: 20px;">
-                        <label style="display: block; margin-bottom: 8px;">${this.i18n.menuName}</label>
-                        <input type="text" id="plugin-click2fill__menu-name" class="b3-text-field" style="display: block; width: 100%;" value="${menu?.name || ""}">
-                    </div>
-                    <div class="plugin-click2fill__form-item" style="display: block; width: 100%; margin-bottom: 20px;">
-                        <label style="display: block; margin-bottom: 8px;">${this.i18n.menuUrl}</label>
-                        <input type="text" id="plugin-click2fill__menu-url" class="b3-text-field" style="display: block; width: 100%;" value="${menu?.url || ""}">
-                    </div>
-                    <div class="plugin-click2fill__form-item">
-                        <label>${this.i18n.menuMethod}</label>
-                        <select id="plugin-click2fill__menu-method" class="b3-select">
-                            <option value="GET" ${menu?.method === "GET" ? "selected" : ""}>GET</option>
-                            <option value="POST" ${menu?.method === "GET" ? "" : "selected"}>POST</option>
-                        </select>
-                    </div>
-                    <div class="plugin-click2fill__form-item">
-                        <label>${this.i18n.menuTemplate}</label>
-                        <textarea id="plugin-click2fill__menu-template" class="b3-text-field fn__block" rows="3" placeholder="支持 ${'${selectText}'} 和 ${'${data}'} 变量，例如：${'${selectText}'} ${'${data}'} 或 ${'${data}'} ${'${selectText}'} 或仅 ${'${data}'}">${menu?.template || "${data}"}</textarea>
-                        <div class="plugin-click2fill__form-hint">支持 ${'${selectText}'} 和 ${'${data}'} 变量，可自定义拼接方式</div>
-                    </div>
-                    <details class="plugin-click2fill__advanced-section">
-                        <summary class="plugin-click2fill__advanced-toggle">高级设置</summary>
-                        <div class="plugin-click2fill__advanced-content">
-                            <div class="plugin-click2fill__form-item">
-                                <label style="display: block; margin-bottom: 8px;">${this.i18n.displayMethod}</label>
-                                <select id="plugin-click2fill__display-method" class="b3-select" style="display: block; width: 100%;">
-                                    <option value="always" ${(!menu?.keyword && !menu?.regex) ? "selected" : ""}>${this.i18n.alwaysDisplay}</option>
-                                    <option value="keyword" ${(menu?.keyword && !menu?.regex) ? "selected" : ""}>${this.i18n.displayByKeyword}</option>
-                                    <option value="regex" ${menu?.regex ? "selected" : ""}>${this.i18n.displayByRegex}</option>
-                                </select>
-                                <div class="plugin-click2fill__form-hint">${this.i18n.displayMethodHint}</div>
-                            </div>
-                            <div class="plugin-click2fill__form-item" id="plugin-click2fill__keyword-section" style="display: ${(menu?.keyword && !menu?.regex) ? "block" : "none"};">
-                                <label style="display: block; margin-bottom: 8px;">${this.i18n.keyword}</label>
-                                <input type="text" id="plugin-click2fill__menu-keyword" class="b3-text-field" style="display: block; width: 100%;" value="${menu?.keyword || ""}" placeholder="${this.i18n.keywordPlaceholder}">
-                            </div>
-                            <div class="plugin-click2fill__form-item" id="plugin-click2fill__regex-section" style="display: ${menu?.regex ? "block" : "none"};">
-                                <label style="display: block; margin-bottom: 8px;">${this.i18n.regex}</label>
-                                <input type="text" id="plugin-click2fill__menu-regex" class="b3-text-field" style="display: block; width: 100%;" value="${menu?.regex || ""}" placeholder="${this.i18n.regexPlaceholder}">
-                            </div>
-                            <div class="plugin-click2fill__form-item">
-                                <label style="display: block; margin-bottom: 8px;">${this.i18n.insertionMethod}</label>
-                                <select id="plugin-click2fill__insertion-method" class="b3-select" style="display: block; width: 100%;">
-                                    <option value="current" ${menu?.insertionMethod === "current" ? "selected" : ""}>${this.i18n.insertToCurrentDocument}</option>
-                                    <option value="subdocument" ${menu?.insertionMethod === "subdocument" ? "selected" : ""}>${this.i18n.insertToSubdocument}</option>
-                                </select>
-                            </div>
-                            <div class="plugin-click2fill__form-item">
-                                <label>${this.i18n.menuHeaders}</label>
-                                <textarea id="plugin-click2fill__menu-headers" class="b3-text-field fn__block" rows="3">${menu?.headers ? JSON.stringify(menu.headers, null, 2) : "{}"}</textarea>
-                            </div>
-                            <div class="plugin-click2fill__form-item">
-                                <label>${this.i18n.menuParams}</label>
-                                <textarea id="plugin-click2fill__menu-params" class="b3-text-field fn__block" rows="3">${menu?.params ? JSON.stringify(menu.params, null, 2) : '{"text": "${selectText}"}'}</textarea>
-                            </div>
-                        </div>
-                    </details>
-                    <div class="b3-dialog__action">
-                        <button class="b3-button b3-button--cancel" id="plugin-click2fill__cancel">${this.i18n.cancel}</button>
-                        <div class="fn__space"></div>
-                        <button class="b3-button b3-button--text" id="plugin-click2fill__save">${this.i18n.save}</button>
-                    </div>
-                </div>
-            `,
-            width: 500,
-            height: 650
-        });
-        
-        setTimeout(() => {
-            const cancelBtn = dialog.element.querySelector("#plugin-click2fill__cancel");
-            const saveBtn = dialog.element.querySelector("#plugin-click2fill__save");
-            const displayMethodSelect = dialog.element.querySelector("#plugin-click2fill__display-method");
-            const keywordSection = dialog.element.querySelector("#plugin-click2fill__keyword-section");
-            const regexSection = dialog.element.querySelector("#plugin-click2fill__regex-section");
-            const keywordInput = dialog.element.querySelector("#plugin-click2fill__menu-keyword");
-            const regexInput = dialog.element.querySelector("#plugin-click2fill__menu-regex");
+            });
             
-            if (cancelBtn) {
-                cancelBtn.addEventListener("click", () => {
-                    dialog.destroy();
-                });
-            }
-            
-            if (saveBtn) {
-                saveBtn.addEventListener("click", () => {
-                    this.saveMenu(menu ? menu.id : null);
-                    dialog.destroy();
-                });
-            }
-            
-            // Add event listener for display method change
-            if (displayMethodSelect && keywordSection && regexSection && keywordInput && regexInput) {
-                displayMethodSelect.addEventListener("change", (e) => {
-                    const selectedValue = (e.target as HTMLSelectElement).value;
-                    
-                    // Reset inputs
-                    keywordInput.value = "";
-                    regexInput.value = "";
-                    
-                    // Show/hide sections based on selected value
-                    if (selectedValue === "always") {
-                        keywordSection.style.display = "none";
-                        regexSection.style.display = "none";
-                    } else if (selectedValue === "keyword") {
-                        keywordSection.style.display = "block";
-                        regexSection.style.display = "none";
-                    } else if (selectedValue === "regex") {
-                        keywordSection.style.display = "none";
-                        regexSection.style.display = "block";
-                    }
-                });
-            }
-        }, 0);
-    }
-    
-    private saveMenu(menuId: string | null) {
-        const name = document.getElementById("plugin-click2fill__menu-name") as HTMLInputElement;
-        const url = document.getElementById("plugin-click2fill__menu-url") as HTMLInputElement;
-        const method = document.getElementById("plugin-click2fill__menu-method") as HTMLSelectElement;
-        const headers = document.getElementById("plugin-click2fill__menu-headers") as HTMLTextAreaElement;
-        const params = document.getElementById("plugin-click2fill__menu-params") as HTMLTextAreaElement;
-        const keyword = document.getElementById("plugin-click2fill__menu-keyword") as HTMLInputElement;
-        const regex = document.getElementById("plugin-click2fill__menu-regex") as HTMLInputElement;
-        const template = document.getElementById("plugin-click2fill__menu-template") as HTMLTextAreaElement;
-        const insertionMethod = document.getElementById("plugin-click2fill__insertion-method") as HTMLSelectElement;
-        
-        if (!name.value.trim() || !url.value.trim()) {
-            showMessage("请填写必填字段");
-            return;
-        }
-        
-        let headersData: Record<string, string> = {};
-        let paramsData: Record<string, string> = {};
-        
-        try {
-            headersData = JSON.parse(headers.value) || {};
-            paramsData = JSON.parse(params.value) || {};
+            // 触发文件选择对话框
+            input.click();
         } catch (error) {
-            showMessage("JSON格式错误");
+            console.error("导入接口失败:", error);
+            showMessage("导入接口失败，请检查控制台错误");
+        }
+    }
+    
+    private updateMenuProperty(menuId: string, property: string, value: any) {
+        if (!this.config || !Array.isArray(this.config.menus)) {
             return;
         }
         
-        let menuUrl = url.value.trim();
-        if (!/^https?:\/\//i.test(menuUrl)) {
-            menuUrl = `http://${menuUrl}`;
+        const menu = this.config.menus.find(menu => menu.id === menuId);
+        if (menu) {
+            (menu as any)[property] = value;
+            this.saveConfig().catch(error => {
+                console.error("Failed to save menu property:", error);
+            });
         }
-        
-        const menu: MenuConfig = {
-            id: menuId || this.generateMenuId(),
-            name: name.value.trim(),
-            icon: "iconLink",
-            url: menuUrl,
-            method: method.value,
-            headers: headersData,
-            params: paramsData,
-            responseType: "json",
-            template: template.value.trim(),
-            keyword: keyword.value.trim(),
-            regex: regex.value.trim(),
-            insertionMethod: insertionMethod.value
-        };
-        
-        if (menuId) {
-            const index = this.config.menus.findIndex(m => m.id === menuId);
-            if (index !== -1) {
-                this.config.menus[index] = menu;
-            }
-        } else {
-            this.config.menus.push(menu);
-        }
-        
-        this.saveConfig();
-        
-        const menuListElement = document.getElementById("plugin-click2fill__menu-list");
-        if (menuListElement) {
-            menuListElement.innerHTML = this.renderMenuList();
-            this.bindConfigPanelEvents(menuListElement.closest(".plugin-click2fill__config") as HTMLElement);
-        }
-        
-        showMessage(this.i18n.configSaved);
     }
-    
-    private deleteMenu(menu: MenuConfig) {
-        confirm("⚠️", this.i18n.confirmDeleteMenu, () => {
-            this.config.menus = this.config.menus.filter(m => m.id !== menu.id);
-            this.saveConfig();
-            
-            const menuListElement = document.getElementById("plugin-click2fill__menu-list");
-            if (menuListElement) {
-                menuListElement.innerHTML = this.renderMenuList();
-                this.bindConfigPanelEvents(menuListElement.closest(".plugin-click2fill__config") as HTMLElement);
-            }
-            
-            showMessage(this.i18n.configSaved);
-        });
-    }
-    
-    private generateMenuId(): string {
-        return "menu-" + Date.now() + "-" + Math.floor(Math.random() * 1000);
-    }
-    
-    /* 自定义设置
-    openSetting() {
-        const dialog = new Dialog({
-            title: this.name,
-            content: `<div class="b3-dialog__content"><textarea class="b3-text-field fn__block" placeholder="readonly text in the menu"></textarea></div>
-<div class="b3-dialog__action">
-    <button class="b3-button b3-button--cancel">${this.i18n.cancel}</button><div class="fn__space"></div>
-    <button class="b3-button b3-button--text">${this.i18n.save}</button>
-</div>`,
-            width: this.isMobile ? "92vw" : "520px",
-        });
-        const inputElement = dialog.element.querySelector("textarea");
-        inputElement.value = this.data[STORAGE_NAME].readonlyText;
-        const btnsElement = dialog.element.querySelectorAll(".b3-button");
-        dialog.bindInput(inputElement, () => {
-            (btnsElement[1] as HTMLButtonElement).click();
-        });
-        inputElement.focus();
-        btnsElement[0].addEventListener("click", () => {
-            dialog.destroy();
-        });
-        btnsElement[1].addEventListener("click", () => {
-            this.saveData(STORAGE_NAME, {readonlyText: inputElement.value});
-            dialog.destroy();
-        });
-    }
-    */
 }
