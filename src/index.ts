@@ -288,11 +288,17 @@ export default class PluginSample extends Plugin {
             Object.assign(requestData, processedParams);
         }
         
+        const globalSiyuan = (globalThis as any).siyuan;
+        const config = this.app?.config || globalSiyuan?.config;
+        const aiConfig = config?.ai || config?.openAI;
+        const apiUserAgent = aiConfig?.openAI?.apiUserAgent || aiConfig?.apiUserAgent;
+        
         const options: any = {
             method: menu.method || "GET",
             headers: {
                 "Content-Type": "application/json",
-                "User-Agent": menu.headers["User-Agent"] || (this.app?.config?.ai?.openAI?.apiUserAgent || "Siyuan-Click2Fill-Plugin"),
+                "User-Agent": menu.headers["User-Agent"] || (apiUserAgent || "Siyuan-Click2Fill-Plugin"),
+                "X-Original-User-Agent": apiUserAgent,
                 ...menu.headers
             }
         };
