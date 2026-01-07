@@ -643,9 +643,6 @@ export default class PluginSample extends Plugin {
         const contentElement = document.querySelector("#dialog-content");
         if (!contentElement) return;
         
-        // 更新步骤导航状态
-        this.updateStepNavigation();
-        
         // 清空内容并根据当前步骤渲染
         contentElement.innerHTML = "";
         
@@ -1026,7 +1023,11 @@ export default class PluginSample extends Plugin {
         const startTime = Date.now();
         const loadingInterval: NodeJS.Timeout = setInterval(() => {
             this.dialogState.loadingTime = Math.floor((Date.now() - startTime) / 1000);
-            this.updateSidebarDialog();
+            // 只更新加载时间的DOM元素，不重新渲染整个对话框
+            const loadingElements = document.querySelectorAll('.b3-loading + span');
+            loadingElements.forEach(element => {
+                element.textContent = `请求中 ${this.dialogState.loadingTime}s`;
+            });
         }, 1000);
         
         try {
@@ -1139,9 +1140,11 @@ export default class PluginSample extends Plugin {
         
         // 转换代码块（支持三个反引号和单个反引号格式）
         // 处理三个反引号格式：```python\ncode```
-        markdown = markdown.replace(/```(\w+)?\n([\s\S]*?)```/g, (match, language, code) => {
+        markdown = markdown.replace(/```(\w+)?\n([\s\S]*?)```/g, (match, language, code, offset) => {
             const lang = language || 'plaintext';
-            const uniqueId = `code-block-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+            // 使用固定的ID生成方式，基于内容的哈希值，确保相同代码块生成相同的ID
+            const codeHash = this.generateHash(match);
+            const uniqueId = `code-block-${codeHash}`;
             // 移除代码开头和结尾的空白字符，确保左对齐
             const trimmedCode = code.trim();
             return `
@@ -1163,9 +1166,11 @@ ${trimmedCode}
         });
         
         // 处理单个反引号格式：`python\ncode`
-        markdown = markdown.replace(/`(\w+)?\n([\s\S]*?)`/g, (match, language, code) => {
+        markdown = markdown.replace(/`(\w+)?\n([\s\S]*?)`/g, (match, language, code, offset) => {
             const lang = language || 'plaintext';
-            const uniqueId = `code-block-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+            // 使用固定的ID生成方式，基于内容的哈希值，确保相同代码块生成相同的ID
+            const codeHash = this.generateHash(match);
+            const uniqueId = `code-block-${codeHash}`;
             // 移除代码开头和结尾的空白字符，确保左对齐
             const trimmedCode = code.trim();
             return `
@@ -1198,6 +1203,18 @@ ${trimmedCode}
         markdown = markdown.replace(/\n/g, '<br>');
         
         return markdown;
+    }
+    
+    private generateHash(str: string): string {
+        // 生成简单的字符串哈希值，确保相同输入生成相同输出
+        let hash = 0;
+        for (let i = 0; i < str.length; i++) {
+            const char = str.charCodeAt(i);
+            hash = ((hash << 5) - hash) + char;
+            hash = hash & hash; // 转换为32位整数
+        }
+        // 转换为正整数并返回前8位
+        return Math.abs(hash).toString(16).substring(0, 8);
     }
     
     private async parseAndSendRequest(inputValue: string) {
