@@ -34,7 +34,7 @@ interface PluginConfig {
 }
 
 interface AIChatMessage {
-    role: "user" | "assistant";
+    role: "user" | "assistant" | "request" | "response";
     content: string;
     timestamp: number;
 }
@@ -608,13 +608,7 @@ export default class PluginSample extends Plugin {
                 
                 <!-- 步骤导航 (仅在新请求模式下显示) -->
                 <div class="step-nav" style="display: flex; align-items: center; margin-bottom: 20px; gap: 8px;">
-                    <button class="step-btn" data-step="send" style="flex: 1; padding: 8px 12px; border: 1px solid var(--b3-theme-border); border-radius: 4px; background-color: var(--b3-theme-background); color: var(--b3-theme-on-surface); cursor: pointer; transition: all 0.2s ease;">
-                        1. 装配报文
-                    </button>
-                    <button class="step-btn" data-step="result" disabled style="flex: 1; padding: 8px 12px; border: 1px solid var(--b3-theme-border); border-radius: 4px; background-color: var(--b3-theme-surface-light); color: var(--b3-theme-on-surface-light); cursor: not-allowed; transition: all 0.2s ease;">
-                        2. 请求结果
-                    </button>
-                    <button class="step-btn" data-step="aiChat" style="flex: 1; padding: 8px 12px; border: 1px solid var(--b3-theme-border); border-radius: 4px; background-color: var(--b3-theme-background); color: var(--b3-theme-on-surface); cursor: pointer; transition: all 0.2s ease;">
+                    <button class="step-btn" data-step="aiChat" style="flex: 1; padding: 8px 12px; border: 1px solid var(--b3-theme-border); border-radius: 4px; background-color: var(--b3-theme-primary); color: white; cursor: pointer; transition: all 0.2s ease;">
                         🤖 AI 聊天
                     </button>
                 </div>
@@ -676,20 +670,14 @@ export default class PluginSample extends Plugin {
         
         // 渲染当前步骤内容
         switch (this.dialogState.step) {
-            case "send":
-            case "result":
-                // 渲染步骤导航
-                this.updateStepNavigation();
-                if (this.dialogState.step === "send") {
-                    this.renderSendStep(contentElement);
-                } else if (this.dialogState.step === "result") {
-                    this.renderResultStep(contentElement);
-                }
-                break;
             case "history":
                 this.renderHistoryStep(contentElement);
                 break;
             case "aiChat":
+            case "send":
+            case "result":
+                // 所有请求相关步骤都显示AI聊天界面
+                this.dialogState.step = "aiChat";
                 this.renderAIChatStep(contentElement);
                 break;
         }
@@ -708,8 +696,6 @@ export default class PluginSample extends Plugin {
         // 显示步骤导航
         stepNav?.setAttribute("style", "display: flex; align-items: center; margin-bottom: 20px; gap: 8px;");
         
-        if (stepBtns.length < 3) return;
-        
         // 为所有步骤按钮启用点击
         stepBtns.forEach(btn => {
             btn.removeAttribute("disabled");
@@ -718,16 +704,10 @@ export default class PluginSample extends Plugin {
         
         // 更新按钮样式
         stepBtns.forEach(btn => {
-            const step = btn.getAttribute("data-step") as "send" | "result" | "aiChat";
-            if (step === this.dialogState.step) {
-                // 当前步骤
-                btn.style.backgroundColor = "var(--b3-theme-primary)";
-                btn.style.color = "white";
-            } else {
-                // 非当前步骤
-                btn.style.backgroundColor = "var(--b3-theme-background)";
-                btn.style.color = "var(--b3-theme-on-surface)";
-            }
+            const step = btn.getAttribute("data-step") as "aiChat";
+            // 始终高亮AI聊天步骤
+            btn.style.backgroundColor = "var(--b3-theme-primary)";
+            btn.style.color = "white";
         });
     }
     
@@ -958,11 +938,17 @@ export default class PluginSample extends Plugin {
         matchedMenus.forEach(menu => {
             const button = element.querySelector(`button[data-menu-id="${menu.id}"]`);
             if (button) {
-                button.addEventListener("click", () => {
+                button.addEventListener("click", async () => {
                     this.dialogState.selectedMenu = menu;
-                    this.dialogState.step = "send";
                     this.prepareRequestData();
+                    // 添加装配报文到AI聊天
+                    this.addAssemblyMessageToChat();
+                    this.dialogState.step = "aiChat";
                     this.updateSidebarDialog();
+                    // 延迟一下确保对话框已显示，然后自动发送请求
+                    setTimeout(async () => {
+                        await this.sendRequestAndShowResult();
+                    }, 100);
                 });
             }
         });
@@ -1093,7 +1079,9 @@ export default class PluginSample extends Plugin {
         try {
             const data = await this.sendRequest(this.dialogState.selectedMenu, this.dialogState.selectedText);
             this.dialogState.responseData = data;
-            this.dialogState.step = "result";
+            
+            // 添加响应消息到AI聊天
+            this.addResponseMessageToChat(data);
             
             this.addKnowledgeToConfig(
                 this.dialogState.selectedText,
@@ -1106,6 +1094,9 @@ export default class PluginSample extends Plugin {
         } catch (error) {
             this.dialogState.error = error instanceof Error ? error.message : "请求失败";
             
+            // 添加错误响应消息到AI聊天
+            this.addResponseMessageToChat(null, this.dialogState.error);
+            
             // 添加错误到历史记录
             this.addToHistory(this.dialogState.selectedText, this.dialogState.selectedMenu!, this.dialogState.requestData, null, this.dialogState.error);
         } finally {
@@ -1113,6 +1104,99 @@ export default class PluginSample extends Plugin {
             this.dialogState.loading = false;
             this.updateSidebarDialog();
         }
+    }
+    
+    private addAssemblyMessageToChat() {
+        if (!this.dialogState.selectedMenu || !this.dialogState.requestData) {
+            console.error("缺少必要数据: selectedMenu=", this.dialogState.selectedMenu, "requestData=", this.dialogState.requestData);
+            return;
+        }
+        
+        const menu = this.dialogState.selectedMenu;
+        const formattedRequest = JSON.stringify(this.dialogState.requestData, null, 2);
+        
+        // 创建装配报文消息，使用HTML换行符保持样式一致
+        const assemblyMessage: AIChatMessage = {
+            role: "request",
+            content: `**${menu.name} 装配报文**<br><br>` +
+                    `**请求信息**<br>` +
+                    `URL: ${menu.url}<br>` +
+                    `Method: ${menu.method}<br><br>` +
+                    `**请求数据**<br>` +
+                    `<pre style="background-color: var(--b3-theme-surface-light); padding: 12px; border-radius: 4px; overflow-x: auto; font-size: 12px; font-family: var(--b3-font-family-code);">${formattedRequest}</pre>`,
+            timestamp: Date.now()
+        };
+        
+        this.dialogState.aiChatMessages.push(assemblyMessage);
+        console.log("添加装配报文消息:", assemblyMessage);
+    }
+    
+    private addResponseMessageToChat(data: any, error: string | null = null) {
+        if (!this.dialogState.selectedMenu) return;
+        
+        const menu = this.dialogState.selectedMenu;
+        
+        // 创建响应消息
+        let responseContent = "";
+        if (data) {
+            // 尝试使用formatResponse方法格式化响应数据
+            try {
+                responseContent = this.formatResponse(data, menu, this.dialogState.selectedText);
+                // 将Markdown转换为HTML
+                responseContent = this.markdownToHtml(responseContent);
+            } catch (e) {
+                // 如果格式化失败，使用JSON格式
+                const jsonContent = typeof data === "object" ? 
+                    JSON.stringify(data, null, 2) : 
+                    String(data);
+                responseContent = `<pre style="background-color: var(--b3-theme-surface-light); padding: 12px; border-radius: 4px; overflow-x: auto; font-size: 12px; font-family: var(--b3-font-family-code);">${jsonContent}</pre>`;
+            }
+        } else {
+            responseContent = `<div style="color: var(--b3-theme-error);">${error || "请求失败"}</div>`;
+        }
+        
+        const responseMessage: AIChatMessage = {
+            role: "response",
+            content: `**${menu.name} 请求结果**<br><br>` +
+                    `**响应数据**<br>${responseContent}`,
+            timestamp: Date.now()
+        };
+        
+        this.dialogState.aiChatMessages.push(responseMessage);
+        console.log("添加响应消息:", responseMessage);
+    }
+    
+    private markdownToHtml(markdown: string): string {
+        // 转换标题
+        markdown = markdown.replace(/^# (.*$)/gm, '<h1 style="margin: 12px 0 8px 0; font-size: 18px; font-weight: bold;">$1</h1>');
+        markdown = markdown.replace(/^## (.*$)/gm, '<h2 style="margin: 10px 0 6px 0; font-size: 16px; font-weight: bold;">$1</h2>');
+        markdown = markdown.replace(/^### (.*$)/gm, '<h3 style="margin: 8px 0 4px 0; font-size: 14px; font-weight: bold;">$1</h3>');
+        
+        // 转换加粗
+        markdown = markdown.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+        
+        // 转换斜体
+        markdown = markdown.replace(/\*(.*?)\*/g, '<em>$1</em>');
+        
+        // 转换行内代码
+        markdown = markdown.replace(/`(.*?)`/g, '<code style="background-color: var(--b3-theme-surface-light); padding: 2px 4px; border-radius: 3px; font-family: var(--b3-font-family-code); font-size: 12px;">$1</code>');
+        
+        // 转换代码块
+        markdown = markdown.replace(/```([\s\S]*?)```/g, '<pre style="background-color: var(--b3-theme-surface-light); padding: 12px; border-radius: 4px; overflow-x: auto; font-size: 12px; font-family: var(--b3-font-family-code); margin: 8px 0;">$1</pre>');
+        
+        // 转换无序列表
+        markdown = markdown.replace(/^\s*[-*]\s(.*$)/gm, '<li style="margin-left: 20px; list-style-type: disc;">$1</li>');
+        
+        // 转换有序列表
+        markdown = markdown.replace(/^\s*\d+\.\s(.*$)/gm, '<li style="margin-left: 20px; list-style-type: decimal;">$1</li>');
+        
+        // 转换引用
+        markdown = markdown.replace(/^> (.*$)/gm, '<blockquote style="border-left: 3px solid var(--b3-theme-primary); padding-left: 10px; margin: 8px 0; color: var(--b3-theme-on-surface-light);">$1</blockquote>');
+        
+        // 转换换行符
+        markdown = markdown.replace(/\n/g, '<br>');
+        
+        return markdown;
     }
     
     private addToHistory(selectedText: string, menu: MenuConfig, requestData: any, responseData: any, error: string | null) {
@@ -1311,6 +1395,10 @@ export default class PluginSample extends Plugin {
                     <svg class="b3-button__icon"><use xlink:href="#iconCopy"></use></svg>
                     <span>复制结果</span>
                 </button>
+                <button class="b3-button b3-button--outline" id="send-to-ai-btn">
+                    <svg class="b3-button__icon"><use xlink:href="#iconSend"></use></svg>
+                    <span>发送到 AI 聊天</span>
+                </button>
             </div>
         `;
         
@@ -1333,33 +1421,59 @@ export default class PluginSample extends Plugin {
                 });
             });
         }
+        
+        const sendToAIBtn = element.querySelector("#send-to-ai-btn");
+        if (sendToAIBtn) {
+            sendToAIBtn.addEventListener("click", () => {
+                if (this.dialogState.selectedMenu && this.dialogState.responseData) {
+                    const formattedRequest = JSON.stringify(this.dialogState.requestData, null, 2);
+                    
+                    const contextMessage = `📡 **${this.dialogState.selectedMenu.name} 请求**\n\n` +
+                        `**请求数据:**\n\`\`\`json\n${formattedRequest}\n\`\`\`\n\n` +
+                        `**响应数据:**\n\`\`\`json\n${formattedResponse}\n\`\`\``;
+                    
+                    // 添加到聊天记录
+                    this.dialogState.aiChatMessages.push({
+                        role: "user",
+                        content: contextMessage,
+                        timestamp: Date.now()
+                    });
+                    
+                    // 切换到AI聊天界面
+                    this.dialogState.step = "aiChat";
+                    this.updateSidebarDialog();
+                }
+            });
+        }
     }
     
     private renderAIChatStep(element: Element) {
+        // 生成完整的聊天消息列表，包括装配报文和请求结果
+        const allMessages = this.generateIntegratedMessages();
+        
+        // 构建基础HTML结构
         element.innerHTML = `
             <div style="display: flex; flex-direction: column; height: 100%; padding: 16px; box-sizing: border-box;">
                 <!-- 聊天消息区域 -->
                 <div id="chat-messages" style="flex: 1; overflow-y: auto; padding: 16px; border-radius: 8px; background-color: var(--b3-theme-surface); margin-bottom: 16px; gap: 12px; display: flex; flex-direction: column;">
-                    ${this.dialogState.aiChatMessages.length > 0 ? 
-                        this.dialogState.aiChatMessages.map(msg => `
-                            <div class="chat-message ${msg.role}" style="margin-bottom: 16px; display: flex; ${msg.role === 'user' ? 'justify-content: flex-end;' : ''}">
-                                <div style="${msg.role === 'user' ? 'order: 2; margin-left: 12px;' : 'order: 1; margin-right: 12px;'}">
-                                    <div style="width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 16px; ${msg.role === 'user' ? 'background-color: var(--b3-theme-primary); color: white;' : 'background-color: var(--b3-theme-surface-light); color: var(--b3-theme-on-surface);'}">
-                                        ${msg.role === "user" ? "👤" : "🤖"}
+                    ${allMessages.length > 0 ? 
+                        allMessages.map((msg, index) => `
+                            <div class="chat-message ${msg.role}" data-message-index="${index}" style="margin-bottom: 16px; display: flex; ${msg.role === 'user' || msg.role === 'request' ? 'justify-content: flex-end;' : 'justify-content: flex-start;'}">
+                                <div style="${(msg.role === 'user' || msg.role === 'request') ? 'order: 2; margin-left: 12px;' : 'order: 1; margin-right: 12px;'}">
+                                    <div style="width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 16px; ${msg.role === 'user' ? 'background-color: var(--b3-theme-primary); color: white;' : msg.role === 'request' ? 'background-color: var(--b3-theme-warning); color: white;' : msg.role === 'response' ? 'background-color: var(--b3-theme-success); color: white;' : 'background-color: var(--b3-theme-surface-light); color: var(--b3-theme-on-surface);'}">
+                                        ${msg.role === "user" ? "👤" : msg.role === "request" ? "📡" : msg.role === "response" ? "📊" : "🤖"}
                                     </div>
                                 </div>
-                                <div style="flex: 1; max-width: 80%; ${msg.role === 'user' ? 'order: 1;' : 'order: 2;'}">
+                                <div style="flex: 1; max-width: 80%; ${(msg.role === 'user' || msg.role === 'request') ? 'order: 1;' : 'order: 2;'}">
                                     <div style="display: flex; align-items: center; margin-bottom: 4px;">
-                                        <span style="font-size: 12px; font-weight: bold; ${msg.role === 'user' ? 'color: var(--b3-theme-primary);' : 'color: var(--b3-theme-on-surface);'}">
-                                            ${msg.role === "user" ? "你" : "AI"}
+                                        <span style="font-size: 12px; font-weight: bold; ${msg.role === 'user' ? 'color: var(--b3-theme-primary);' : msg.role === 'request' ? 'color: var(--b3-theme-warning);' : msg.role === 'response' ? 'color: var(--b3-theme-success);' : 'color: var(--b3-theme-on-surface);'}">
+                                            ${msg.role === "user" ? "你" : msg.role === "request" ? "装配报文" : msg.role === "response" ? "请求结果" : "AI"}
                                         </span>
                                         <span style="font-size: 10px; color: var(--b3-theme-on-surface-light); margin-left: 8px;">
                                             ${new Date(msg.timestamp).toLocaleTimeString()}
                                         </span>
                                     </div>
-                                    <div style="padding: 12px; border-radius: 12px; line-height: 1.4; font-size: 14px; ${msg.role === 'user' ? 'background-color: var(--b3-theme-primary-light); color: var(--b3-theme-on-primary); border-bottom-right-radius: 4px;' : 'background-color: var(--b3-theme-surface-light); color: var(--b3-theme-on-surface); border-bottom-left-radius: 4px;'}">
-                                        ${msg.content}
-                                    </div>
+                                    <div style="padding: 12px; border-radius: 12px; line-height: 1.4; font-size: 14px; ${msg.role === 'user' ? 'background-color: var(--b3-theme-primary); color: white; border-bottom-right-radius: 4px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);' : msg.role === 'request' || msg.role === 'response' ? 'background-color: var(--b3-theme-surface); color: var(--b3-theme-on-surface); border-bottom-left-radius: 4px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); border: 1px solid var(--b3-theme-border); user-select: text;' : 'background-color: var(--b3-theme-background); color: var(--b3-theme-on-background); border-bottom-left-radius: 4px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); border: 1px solid var(--b3-theme-border); user-select: text;'}" class="message-content"></div>
                                 </div>
                             </div>
                         `).join("") : 
@@ -1402,25 +1516,43 @@ export default class PluginSample extends Plugin {
                 </div>
                 
                 <!-- 输入区域 -->
-                <div style="display: flex; gap: 12px; padding: 16px; background-color: var(--b3-theme-surface); border-radius: 8px; box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.1); margin-bottom: 24px;">
-                    <textarea 
-                        id="ai-chat-input" 
-                        style="flex: 1; padding: 12px; border: 1px solid var(--b3-theme-border); border-radius: 8px; resize: none; min-height: 48px; max-height: 150px; font-size: 14px; font-family: var(--b3-font-family); background-color: var(--b3-theme-background); color: var(--b3-theme-on-background);"
-                        placeholder="输入消息..."
-                        ${this.dialogState.aiChatLoading ? "disabled" : ""}
-                    ></textarea>
-                    <button 
-                        class="b3-button b3-button--primary" 
-                        id="send-ai-chat-btn" 
-                        ${this.dialogState.aiChatLoading ? "disabled" : ""}
-                        style="padding: 0 20px; border-radius: 8px; font-size: 14px; font-weight: 500; min-width: 80px; display: flex; align-items: center; justify-content: center; gap: 4px;"
-                    >
-                        <svg class="b3-button__icon"><use xlink:href="#iconSend"></use></svg>
-                        <span>发送</span>
-                    </button>
+                <div style="padding: 16px; background-color: var(--b3-theme-surface); border-radius: 8px; box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.1);">
+                    ${this.dialogState.selectedMenu ? `
+                        <div style="margin-bottom: 12px; display: flex; gap: 8px;">
+                            <button class="b3-button b3-button--outline" id="send-request-btn" ${this.dialogState.loading ? "disabled" : ""}>
+                                <svg class="b3-button__icon"><use xlink:href="#iconSend"></use></svg>
+                                <span>发送 ${this.dialogState.selectedMenu.name} 请求</span>
+                            </button>
+                        </div>
+                    ` : ""}
+                    <div style="display: flex; gap: 12px;">
+                        <textarea 
+                            id="ai-chat-input" 
+                            style="flex: 1; padding: 12px; border: 1px solid var(--b3-theme-border); border-radius: 8px; resize: none; min-height: 48px; max-height: 150px; font-size: 14px; font-family: var(--b3-font-family); background-color: var(--b3-theme-background); color: var(--b3-theme-on-background);"
+                            placeholder="输入消息..."
+                            ${this.dialogState.aiChatLoading ? "disabled" : ""}
+                        ></textarea>
+                        <button 
+                            class="b3-button b3-button--primary" 
+                            id="send-ai-chat-btn" 
+                            ${this.dialogState.aiChatLoading ? "disabled" : ""}
+                            style="padding: 0 20px; border-radius: 8px; font-size: 14px; font-weight: 500; min-width: 80px; display: flex; align-items: center; justify-content: center; gap: 4px;"
+                        >
+                            <svg class="b3-button__icon"><use xlink:href="#iconSend"></use></svg>
+                            <span>发送</span>
+                        </button>
+                    </div>
                 </div>
             </div>
         `;
+        
+        // 设置消息内容，确保HTML标签被正确渲染
+        const messageContents = element.querySelectorAll(".message-content");
+        messageContents.forEach((contentElement, index) => {
+            if (index < allMessages.length) {
+                contentElement.innerHTML = allMessages[index].content;
+            }
+        });
         
         // 添加发送按钮事件
         const sendBtn = element.querySelector("#send-ai-chat-btn");
@@ -1431,6 +1563,14 @@ export default class PluginSample extends Plugin {
                     this.dialogState.aiChatInput = chatInput.value;
                 }
                 await this.sendAIChatMessage();
+            });
+        }
+        
+        // 添加发送请求按钮事件
+        const sendRequestBtn = element.querySelector("#send-request-btn");
+        if (sendRequestBtn) {
+            sendRequestBtn.addEventListener("click", async () => {
+                await this.sendRequestAndShowResult();
             });
         }
         
@@ -1457,6 +1597,20 @@ export default class PluginSample extends Plugin {
         if (chatMessages) {
             chatMessages.scrollTop = chatMessages.scrollHeight;
         }
+    }
+    
+    private generateIntegratedMessages() {
+        const allMessages = [];
+        
+        // 只添加AI聊天消息，包括装配报文和请求结果
+        this.dialogState.aiChatMessages.forEach(msg => {
+            allMessages.push(msg);
+        });
+        
+        // 按时间排序
+        allMessages.sort((a, b) => a.timestamp - b.timestamp);
+        
+        return allMessages;
     }
     
     private formatResponse(data: any, menu: MenuConfig, selectedText: string): string {
@@ -1668,8 +1822,10 @@ export default class PluginSample extends Plugin {
                     this.clearFloatingMenu();
                     this.dialogState.selectedText = selectedText;
                     this.dialogState.selectedMenu = menu;
-                    this.dialogState.step = "send";
+                    this.dialogState.step = "aiChat";
                     this.prepareRequestData();
+                    // 添加装配报文到AI聊天
+                    this.addAssemblyMessageToChat();
                     await this.showSidebarDialog();
                     // 延迟一下确保对话框已显示，然后自动发送请求
                     setTimeout(async () => {
