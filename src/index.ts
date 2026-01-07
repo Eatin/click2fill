@@ -408,7 +408,7 @@ export default class PluginSample extends Plugin {
         const url = `${apiBaseURL.endsWith("/") ? apiBaseURL : apiBaseURL + "/"}chat/completions`;
         
         const requestMessages = messages.map(msg => ({
-            role: msg.role,
+            role: msg.role === 'request' || msg.role === 'response' ? 'user' : msg.role,
             content: msg.content
         }));
         
@@ -606,13 +606,6 @@ export default class PluginSample extends Plugin {
                     </button>
                 </div>
                 
-                <!-- 步骤导航 (仅在新请求模式下显示) -->
-                <div class="step-nav" style="display: flex; align-items: center; margin-bottom: 20px; gap: 8px;">
-                    <button class="step-btn" data-step="aiChat" style="flex: 1; padding: 8px 12px; border: 1px solid var(--b3-theme-border); border-radius: 4px; background-color: var(--b3-theme-primary); color: white; cursor: pointer; transition: all 0.2s ease;">
-                        🤖 AI 聊天
-                    </button>
-                </div>
-                
                 <!-- 内容区域 -->
                 <div id="dialog-content" style="flex: 1; overflow-y: auto;"></div>
             </div>
@@ -630,18 +623,6 @@ export default class PluginSample extends Plugin {
                     await this.openConfigurePanel();
                 } else if (action === "history") {
                     this.dialogState.step = "history";
-                    this.updateSidebarDialog();
-                }
-            });
-        });
-        
-        // 添加步骤导航事件监听
-        const stepBtns = element.querySelectorAll(".step-btn");
-        stepBtns.forEach(btn => {
-            btn.addEventListener("click", (e) => {
-                const step = (e.target as HTMLElement).closest(".step-btn")?.getAttribute("data-step") as "send" | "result" | "aiChat";
-                if (step) {
-                    this.dialogState.step = step;
                     this.updateSidebarDialog();
                 }
             });
@@ -681,34 +662,6 @@ export default class PluginSample extends Plugin {
                 this.renderAIChatStep(contentElement);
                 break;
         }
-    }
-    
-    private updateStepNavigation() {
-        const stepNav = document.querySelector(".step-nav");
-        const stepBtns = document.querySelectorAll(".step-btn");
-        
-        if (this.dialogState.step === "history") {
-            // 在历史记录模式下隐藏步骤导航
-            stepNav?.setAttribute("style", "display: none;");
-            return;
-        }
-        
-        // 显示步骤导航
-        stepNav?.setAttribute("style", "display: flex; align-items: center; margin-bottom: 20px; gap: 8px;");
-        
-        // 为所有步骤按钮启用点击
-        stepBtns.forEach(btn => {
-            btn.removeAttribute("disabled");
-            btn.style.cursor = "pointer";
-        });
-        
-        // 更新按钮样式
-        stepBtns.forEach(btn => {
-            const step = btn.getAttribute("data-step") as "aiChat";
-            // 始终高亮AI聊天步骤
-            btn.style.backgroundColor = "var(--b3-theme-primary)";
-            btn.style.color = "white";
-        });
     }
     
     private renderHistoryStep(element: Element) {
@@ -1167,6 +1120,9 @@ export default class PluginSample extends Plugin {
     }
     
     private markdownToHtml(markdown: string): string {
+        // 去除前导空格
+        markdown = markdown.trimStart();
+        
         // 转换标题
         markdown = markdown.replace(/^# (.*$)/gm, '<h1 style="margin: 12px 0 8px 0; font-size: 18px; font-weight: bold;">$1</h1>');
         markdown = markdown.replace(/^## (.*$)/gm, '<h2 style="margin: 10px 0 6px 0; font-size: 16px; font-weight: bold;">$1</h2>');
@@ -1181,9 +1137,54 @@ export default class PluginSample extends Plugin {
         // 转换行内代码
         markdown = markdown.replace(/`(.*?)`/g, '<code style="background-color: var(--b3-theme-surface-light); padding: 2px 4px; border-radius: 3px; font-family: var(--b3-font-family-code); font-size: 12px;">$1</code>');
         
-        // 转换代码块
-        markdown = markdown.replace(/```([\s\S]*?)```/g, '<pre style="background-color: var(--b3-theme-surface-light); padding: 12px; border-radius: 4px; overflow-x: auto; font-size: 12px; font-family: var(--b3-font-family-code); margin: 8px 0;">$1</pre>');
+        // 转换代码块（支持三个反引号和单个反引号格式）
+        // 处理三个反引号格式：```python\ncode```
+        markdown = markdown.replace(/```(\w+)?\n([\s\S]*?)```/g, (match, language, code) => {
+            const lang = language || 'plaintext';
+            const uniqueId = `code-block-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+            // 移除代码开头和结尾的空白字符，确保左对齐
+            const trimmedCode = code.trim();
+            return `
+                <div style="position: relative; margin: 12px 0; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background-color: var(--b3-theme-surface); border-bottom: 1px solid var(--b3-theme-border);">
+                        <span style="font-size: 12px; color: var(--b3-theme-on-surface-light); font-family: var(--b3-font-family-code); font-weight: 500;">${lang}</span>
+                        <button class="b3-button b3-button--small b3-button--outline" data-copy-code="${uniqueId}" style="font-size: 10px; padding: 2px 8px; background-color: var(--b3-theme-background); border: 1px solid var(--b3-theme-border);">
+                            <svg class="b3-button__icon" style="width: 12px; height: 12px;"><use xlink:href="#iconCopy"></use></svg>
+                            <span>复制</span>
+                        </button>
+                    </div>
+                    <div style="background-color: var(--b3-theme-background); border: 1px solid var(--b3-theme-border); border-top: none; border-bottom-left-radius: 8px; border-bottom-right-radius: 8px;">
+                        <pre id="${uniqueId}" style="padding: 16px; margin: 0; overflow-x: auto; font-size: 13px; font-family: var(--b3-font-family-code); line-height: 1.4; color: var(--b3-theme-on-background); text-align: left; white-space: pre-wrap; word-wrap: break-word;">
+${trimmedCode}
+                        </pre>
+                    </div>
+                </div>
+            `;
+        });
         
+        // 处理单个反引号格式：`python\ncode`
+        markdown = markdown.replace(/`(\w+)?\n([\s\S]*?)`/g, (match, language, code) => {
+            const lang = language || 'plaintext';
+            const uniqueId = `code-block-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+            // 移除代码开头和结尾的空白字符，确保左对齐
+            const trimmedCode = code.trim();
+            return `
+                <div style="position: relative; margin: 12px 0; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background-color: var(--b3-theme-surface); border-bottom: 1px solid var(--b3-theme-border);">
+                        <span style="font-size: 12px; color: var(--b3-theme-on-surface-light); font-family: var(--b3-font-family-code); font-weight: 500;">${lang}</span>
+                        <button class="b3-button b3-button--small b3-button--outline" data-copy-code="${uniqueId}" style="font-size: 10px; padding: 2px 8px; background-color: var(--b3-theme-background); border: 1px solid var(--b3-theme-border);">
+                            <svg class="b3-button__icon" style="width: 12px; height: 12px;"><use xlink:href="#iconCopy"></use></svg>
+                            <span>复制</span>
+                        </button>
+                    </div>
+                    <div style="background-color: var(--b3-theme-background); border: 1px solid var(--b3-theme-border); border-top: none; border-bottom-left-radius: 8px; border-bottom-right-radius: 8px;">
+                        <pre id="${uniqueId}" style="padding: 16px; margin: 0; overflow-x: auto; font-size: 13px; font-family: var(--b3-font-family-code); line-height: 1.4; color: var(--b3-theme-on-background); text-align: left; white-space: pre-wrap; word-wrap: break-word;">
+${trimmedCode}
+                        </pre>
+                    </div>
+                </div>
+            `;
+        });
         // 转换无序列表
         markdown = markdown.replace(/^\s*[-*]\s(.*$)/gm, '<li style="margin-left: 20px; list-style-type: disc;">$1</li>');
         
@@ -1197,6 +1198,59 @@ export default class PluginSample extends Plugin {
         markdown = markdown.replace(/\n/g, '<br>');
         
         return markdown;
+    }
+    
+    private async parseAndSendRequest(inputValue: string) {
+        if (!this.dialogState.selectedMenu) {
+            showMessage("请先选择一个接口");
+            return;
+        }
+        
+        try {
+            // 解析URL
+            const urlMatch = inputValue.match(/URL:\s*(.+?)(?=\n|$)/);
+            const url = urlMatch ? urlMatch[1].trim() : this.dialogState.selectedMenu.url;
+            
+            // 解析Method
+            const methodMatch = inputValue.match(/Method:\s*(.+?)(?=\n|$)/);
+            const method = methodMatch ? methodMatch[1].trim() : this.dialogState.selectedMenu.method;
+            
+            // 解析请求数据
+            const jsonMatch = inputValue.match(/```json[\s\S]*?([\s\S]*?)```/);
+            let requestData = this.dialogState.requestData;
+            
+            if (jsonMatch) {
+                try {
+                    requestData = JSON.parse(jsonMatch[1].trim());
+                } catch (error) {
+                    showMessage("无效的JSON格式，请检查请求数据");
+                    return;
+                }
+            }
+            
+            // 更新菜单配置
+            const menu = this.dialogState.selectedMenu;
+            menu.url = url;
+            menu.method = method;
+            this.dialogState.requestData = requestData;
+            
+            // 添加装配报文到AI聊天
+            this.addAssemblyMessageToChat();
+            
+            // 发送请求
+            await this.sendRequestAndShowResult();
+            
+            // 清空输入框
+            const chatInput = document.querySelector("#ai-chat-input") as HTMLTextAreaElement;
+            if (chatInput) {
+                chatInput.value = "";
+                chatInput.style.height = "auto";
+            }
+            
+        } catch (error) {
+            console.error("解析请求数据失败:", error);
+            showMessage("解析请求数据失败，请检查格式");
+        }
     }
     
     private addToHistory(selectedText: string, menu: MenuConfig, requestData: any, responseData: any, error: string | null) {
@@ -1253,9 +1307,11 @@ export default class PluginSample extends Plugin {
             const response = await this.sendAIChatRequest(this.dialogState.aiChatMessages);
             
             // 添加 AI 回复到聊天记录
+            // 处理Markdown格式
+            const formattedResponse = this.markdownToHtml(response);
             const aiChatMessage: AIChatMessage = {
                 role: "assistant",
-                content: response,
+                content: formattedResponse,
                 timestamp: Date.now()
             };
             this.dialogState.aiChatMessages.push(aiChatMessage);
@@ -1474,6 +1530,21 @@ export default class PluginSample extends Plugin {
                                         </span>
                                     </div>
                                     <div style="padding: 12px; border-radius: 12px; line-height: 1.4; font-size: 14px; ${msg.role === 'user' ? 'background-color: var(--b3-theme-primary); color: white; border-bottom-right-radius: 4px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);' : msg.role === 'request' || msg.role === 'response' ? 'background-color: var(--b3-theme-surface); color: var(--b3-theme-on-surface); border-bottom-left-radius: 4px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); border: 1px solid var(--b3-theme-border); user-select: text;' : 'background-color: var(--b3-theme-background); color: var(--b3-theme-on-background); border-bottom-left-radius: 4px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); border: 1px solid var(--b3-theme-border); user-select: text;'}" class="message-content"></div>
+                                    ${msg.role === 'request' ? `
+                                        <div style="margin-top: 8px; display: flex; justify-content: flex-end; gap: 8px;">
+                                            <button class="b3-button b3-button--small b3-button--outline" data-edit-request="${index}" style="font-size: 12px;">
+                                                <svg class="b3-button__icon"><use xlink:href="#iconEdit"></use></svg>
+                                                <span>编辑</span>
+                                            </button>
+                                            <button class="b3-button b3-button--small b3-button--outline" data-request-index="${index}" style="font-size: 12px;">
+                                                <svg class="b3-button__icon"><use xlink:href="#iconRefresh"></use></svg>
+                                                <span>再来一次</span>
+                                            </button>
+                                        </div>
+                                    ` : msg.role === 'assistant' ? `
+                                        <div style="margin-top: 8px; display: flex; justify-content: flex-end;">
+                                        </div>
+                                    ` : ""}
                                 </div>
                             </div>
                         `).join("") : 
@@ -1492,8 +1563,11 @@ export default class PluginSample extends Plugin {
                         '<div style="display: flex; align-items: center; margin-bottom: 4px;">' +
                         '<span style="font-size: 12px; font-weight: bold; color: var(--b3-theme-on-surface);">AI</span>' +
                         '</div>' +
-                        '<div style="padding: 12px; border-radius: 12px; background-color: var(--b3-theme-surface-light); color: var(--b3-theme-on-surface); border-bottom-left-radius: 4px;">' +
-                        '<div class="b3-loading" style="margin: 8px 0;"></div>' +
+                        '<div style="padding: 16px; border-radius: 12px; background-color: var(--b3-theme-background); color: var(--b3-theme-on-background); border-bottom-left-radius: 4px; border: 1px solid var(--b3-theme-border);">' +
+                        '<div style="display: flex; align-items: center; justify-content: center; gap: 12px;">' +
+                        '<div class="b3-loading" style="margin: 0;"></div>' +
+                        '<span style="font-size: 14px; color: var(--b3-theme-on-surface-light);">AI 正在思考中，请稍候...</span>' +
+                        '</div>' +
                         '</div>' +
                         '</div>' +
                         '</div>' : ""
@@ -1517,14 +1591,7 @@ export default class PluginSample extends Plugin {
                 
                 <!-- 输入区域 -->
                 <div style="padding: 16px; background-color: var(--b3-theme-surface); border-radius: 8px; box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.1);">
-                    ${this.dialogState.selectedMenu ? `
-                        <div style="margin-bottom: 12px; display: flex; gap: 8px;">
-                            <button class="b3-button b3-button--outline" id="send-request-btn" ${this.dialogState.loading ? "disabled" : ""}>
-                                <svg class="b3-button__icon"><use xlink:href="#iconSend"></use></svg>
-                                <span>发送 ${this.dialogState.selectedMenu.name} 请求</span>
-                            </button>
-                        </div>
-                    ` : ""}
+
                     <div style="display: flex; gap: 12px;">
                         <textarea 
                             id="ai-chat-input" 
@@ -1536,7 +1603,8 @@ export default class PluginSample extends Plugin {
                             class="b3-button b3-button--primary" 
                             id="send-ai-chat-btn" 
                             ${this.dialogState.aiChatLoading ? "disabled" : ""}
-                            style="padding: 0 20px; border-radius: 8px; font-size: 14px; font-weight: 500; min-width: 80px; display: flex; align-items: center; justify-content: center; gap: 4px;"
+                            style="padding: 0 20px; border-radius: 8px; font-size: 14px; font-weight: 500; min-width: 100px; display: flex; align-items: center; justify-content: center; gap: 4px;"
+                            title="Ctrl+Enter 发送"
                         >
                             <svg class="b3-button__icon"><use xlink:href="#iconSend"></use></svg>
                             <span>发送</span>
@@ -1560,9 +1628,17 @@ export default class PluginSample extends Plugin {
             sendBtn.addEventListener("click", async () => {
                 const chatInput = element.querySelector("#ai-chat-input") as HTMLTextAreaElement;
                 if (chatInput) {
-                    this.dialogState.aiChatInput = chatInput.value;
+                    const inputValue = chatInput.value;
+                    // 检查是否是API请求格式
+                    if (inputValue.includes("📡 **") && (inputValue.includes("URL:") || inputValue.includes("Method:")) && inputValue.includes("请求数据")) {
+                        // 解析API请求数据并发送
+                        await this.parseAndSendRequest(inputValue);
+                    } else {
+                        // 发送AI聊天消息
+                        this.dialogState.aiChatInput = inputValue;
+                        await this.sendAIChatMessage();
+                    }
                 }
-                await this.sendAIChatMessage();
             });
         }
         
@@ -1574,15 +1650,28 @@ export default class PluginSample extends Plugin {
             });
         }
         
-        // 添加输入框回车发送事件
+        // 添加输入框事件
         const chatInput = element.querySelector("#ai-chat-input") as HTMLTextAreaElement;
         if (chatInput) {
+            // 添加Ctrl+Enter发送事件
             chatInput.addEventListener("keydown", async (e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
+                if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
                     e.preventDefault();
-                    this.dialogState.aiChatInput = chatInput.value;
-                    await this.sendAIChatMessage();
+                    const inputValue = chatInput.value.trim();
+                    // 检查输入内容是否有效
+                    if (inputValue) {
+                        // 检查是否是API请求格式
+                        if (inputValue.includes("📡 **") && (inputValue.includes("URL:") || inputValue.includes("Method:")) && inputValue.includes("请求数据")) {
+                            // 解析API请求数据并发送
+                            await this.parseAndSendRequest(inputValue);
+                        } else {
+                            // 发送AI聊天消息
+                            this.dialogState.aiChatInput = inputValue;
+                            await this.sendAIChatMessage();
+                        }
+                    }
                 }
+                // Enter键正常换行，不需要处理
             });
             
             // 自动调整输入框高度
@@ -1591,6 +1680,94 @@ export default class PluginSample extends Plugin {
                 chatInput.style.height = Math.min(chatInput.scrollHeight, 150) + "px";
             });
         }
+        
+        // 添加"再来一次"按钮事件
+        const retryButtons = element.querySelectorAll('[data-request-index]');
+        retryButtons.forEach(button => {
+            button.addEventListener('click', async () => {
+                await this.sendRequestAndShowResult();
+                // 重新渲染界面以显示新的请求结果
+                this.updateSidebarDialog();
+                // 滚动到底部
+                const chatMessages = element.querySelector("#chat-messages");
+                if (chatMessages) {
+                    chatMessages.scrollTop = chatMessages.scrollHeight;
+                }
+            });
+        });
+        
+        // 添加"编辑"按钮事件
+        const editButtons = element.querySelectorAll('[data-edit-request]');
+        editButtons.forEach(button => {
+            button.addEventListener('click', () => {
+                // 将装配报文内容复制到输入框
+                const chatInput = element.querySelector("#ai-chat-input") as HTMLTextAreaElement;
+                if (chatInput && this.dialogState.selectedMenu) {
+                    const menu = this.dialogState.selectedMenu;
+                    const requestData = this.dialogState.requestData;
+                    
+                    // 构建编辑文本
+                    const editText = `📡 **${menu.name} 请求**\n\n` +
+                        `**请求信息**\n` +
+                        `URL: ${menu.url}\n` +
+                        `Method: ${menu.method}\n\n` +
+                        `**请求数据**\n` +
+                        `\`\`\`json\n${JSON.stringify(requestData, null, 2)}\n\`\`\``;
+                    
+                    chatInput.value = editText;
+                    chatInput.style.height = "auto";
+                    chatInput.style.height = Math.min(chatInput.scrollHeight, 150) + "px";
+                    showMessage("已将请求数据复制到输入框，请修改后按回车发送");
+                }
+            });
+        });
+        
+        // 添加代码块复制按钮事件
+        const copyCodeButtons = element.querySelectorAll('[data-copy-code]');
+        copyCodeButtons.forEach(button => {
+            button.addEventListener('click', async () => {
+                const codeBlockId = (button as HTMLElement).getAttribute('data-copy-code');
+                if (codeBlockId) {
+                    const codeBlock = element.querySelector(`#${codeBlockId}`) as HTMLElement;
+                    if (codeBlock) {
+                        const originalText = (button as HTMLElement).innerText;
+                        // 获取代码语言（从父元素的语言标签中获取）
+                        const langElement = (button as HTMLElement).parentElement?.querySelector('span');
+                        const lang = langElement?.textContent || 'undefined';
+                        
+                        try {
+                            // 显示复制中状态
+                            (button as HTMLElement).innerHTML = '<svg class="b3-button__icon" style="width: 12px; height: 12px;"><use xlink:href="#iconLoading"></use></svg><span>复制中...</span>';
+                            (button as HTMLElement).disabled = true;
+                            
+                            // 复制带格式的代码内容（包含Markdown代码块标记）
+                            const codeContent = codeBlock.innerText;
+                            const formattedCode = `\`\`\`${lang}\n${codeContent}\n\`\`\``;
+                            await navigator.clipboard.writeText(formattedCode);
+                            
+                            // 显示复制成功状态
+                            (button as HTMLElement).innerHTML = '<svg class="b3-button__icon" style="width: 12px; height: 12px;"><use xlink:href="#iconSuccess"></use></svg><span>已复制</span>';
+                            
+                            // 2秒后恢复按钮状态
+                            setTimeout(() => {
+                                (button as HTMLElement).innerHTML = '<svg class="b3-button__icon" style="width: 12px; height: 12px;"><use xlink:href="#iconCopy"></use></svg><span>复制</span>';
+                                (button as HTMLElement).disabled = false;
+                            }, 2000);
+                            
+                            showMessage('代码已复制到剪贴板');
+                        } catch (error) {
+                            console.error('复制代码失败:', error);
+                            (button as HTMLElement).innerHTML = '<svg class="b3-button__icon" style="width: 12px; height: 12px;"><use xlink:href="#iconAlert"></use></svg><span>复制失败</span>';
+                            setTimeout(() => {
+                                (button as HTMLElement).innerHTML = '<svg class="b3-button__icon" style="width: 12px; height: 12px;"><use xlink:href="#iconCopy"></use></svg><span>复制</span>';
+                                (button as HTMLElement).disabled = false;
+                            }, 2000);
+                            showMessage('复制代码失败，请重试');
+                        }
+                    }
+                }
+            });
+        });
         
         // 滚动到底部
         const chatMessages = element.querySelector("#chat-messages");
