@@ -30,6 +30,21 @@ interface PluginConfig {
     defaultMenu: string;
     knowledge: KnowledgeItem[];
     history: RequestHistory[];
+    aiChatHistory: AIChatHistory[];
+}
+
+interface AIChatMessage {
+    role: "user" | "assistant";
+    content: string;
+    timestamp: number;
+}
+
+interface AIChatHistory {
+    id: string;
+    title: string;
+    messages: AIChatMessage[];
+    createdAt: number;
+    updatedAt: number;
 }
 
 interface RequestHistory {
@@ -47,12 +62,19 @@ interface DialogState {
     selectedMenu: MenuConfig | null;
     requestData: any;
     responseData: any;
-    step: "send" | "result" | "history";
+    step: "send" | "result" | "history" | "aiChat";
     loading: boolean;
     loadingTime: number;
     error: string | null;
     history: RequestHistory[];
     currentHistoryId: string | null;
+    // AI 聊天相关状态
+    aiChatMessages: AIChatMessage[];
+    aiChatInput: string;
+    aiChatLoading: boolean;
+    aiChatError: string | null;
+    aiChatHistory: AIChatHistory[];
+    currentAIChatId: string | null;
 }
 
 export default class PluginSample extends Plugin {
@@ -68,7 +90,14 @@ export default class PluginSample extends Plugin {
         loadingTime: 0,
         error: null,
         history: [],
-        currentHistoryId: null
+        currentHistoryId: null,
+        // AI 聊天相关默认值
+        aiChatMessages: [],
+        aiChatInput: "",
+        aiChatLoading: false,
+        aiChatError: null,
+        aiChatHistory: [],
+        currentAIChatId: null
     };
 
     async onload() {
@@ -148,11 +177,12 @@ export default class PluginSample extends Plugin {
                 })),
                 defaultMenu: "",
                 knowledge: [],
-                history: []
+                history: [],
+                aiChatHistory: []
             };
             await this.saveConfig();
         } else {
-            let menus = Array.isArray(storedConfig.menus) ? storedConfig.menus.map(menu => ({
+            const menus = Array.isArray(storedConfig.menus) ? storedConfig.menus.map(menu => ({
                 ...menu,
                 insertionMethod: menu.insertionMethod || "current"
             })) : [];
@@ -187,7 +217,8 @@ export default class PluginSample extends Plugin {
                 menus: menus,
                 defaultMenu: storedConfig.defaultMenu || "",
                 knowledge: Array.isArray(storedConfig.knowledge) ? storedConfig.knowledge : [],
-                history: Array.isArray(storedConfig.history) ? storedConfig.history : []
+                history: Array.isArray(storedConfig.history) ? storedConfig.history : [],
+                aiChatHistory: Array.isArray(storedConfig.aiChatHistory) ? storedConfig.aiChatHistory : []
             };
             
             // 加载历史记录到对话框状态
@@ -197,6 +228,17 @@ export default class PluginSample extends Plugin {
                 if (this.dialogState.history.length > 100) {
                     this.dialogState.history = this.dialogState.history.slice(0, 100);
                     this.config.history = this.dialogState.history;
+                    await this.saveConfig();
+                }
+            }
+            
+            // 加载 AI 聊天历史到对话框状态
+            if (Array.isArray(this.config.aiChatHistory)) {
+                this.dialogState.aiChatHistory = this.config.aiChatHistory;
+                // 确保 AI 聊天历史数量不超过50条
+                if (this.dialogState.aiChatHistory.length > 50) {
+                    this.dialogState.aiChatHistory = this.dialogState.aiChatHistory.slice(0, 50);
+                    this.config.aiChatHistory = this.dialogState.aiChatHistory;
                     await this.saveConfig();
                 }
             }
@@ -214,7 +256,8 @@ export default class PluginSample extends Plugin {
                 menus: [],
                 defaultMenu: "",
                 knowledge: [],
-                history: []
+                history: [],
+                aiChatHistory: []
             };
         }
         
@@ -228,6 +271,10 @@ export default class PluginSample extends Plugin {
         
         if (!Array.isArray(this.config.history)) {
             this.config.history = [];
+        }
+        
+        if (!Array.isArray(this.config.aiChatHistory)) {
+            this.config.aiChatHistory = [];
         }
         
         await this.saveData(STORAGE_NAME, this.config);
@@ -343,6 +390,82 @@ export default class PluginSample extends Plugin {
         }
         
         return data;
+    }
+    
+    private async sendAIChatRequest(messages: AIChatMessage[]): Promise<string> {
+        const globalSiyuan = (globalThis as any).siyuan;
+        const config = this.app?.config || globalSiyuan?.config;
+        const aiConfig = config?.ai || config?.openAI;
+        
+        if (!aiConfig?.openAI?.apiKey || !aiConfig?.openAI?.apiBaseURL) {
+            throw new Error("请先在思源笔记设置中配置 OpenAI API 密钥和基础 URL");
+        }
+        
+        const apiKey = aiConfig.openAI.apiKey;
+        const apiBaseURL = aiConfig.openAI.apiBaseURL;
+        const model = aiConfig.openAI.apiModel || "gpt-3.5-turbo";
+        
+        const url = `${apiBaseURL.endsWith("/") ? apiBaseURL : apiBaseURL + "/"}chat/completions`;
+        
+        const requestMessages = messages.map(msg => ({
+            role: msg.role,
+            content: msg.content
+        }));
+        
+        const options: any = {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${apiKey}`
+            },
+            body: JSON.stringify({
+                model,
+                messages: requestMessages,
+                stream: true
+            })
+        };
+        
+        const response = await fetch(url, options);
+        
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(`AI 聊天请求失败: ${errorData.error?.message || `HTTP error! status: ${response.status}`}`);
+        }
+        
+        const reader = response.body?.getReader();
+        if (!reader) {
+            throw new Error("无法读取响应流");
+        }
+        
+        let fullResponse = "";
+        const decoder = new TextDecoder();
+        
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            
+            const chunk = decoder.decode(value, { stream: true });
+            const lines = chunk.split("\n");
+            
+            for (const line of lines) {
+                if (line.startsWith("data: ")) {
+                    const data = line.substring(6);
+                    if (data === "[DONE]") continue;
+                    
+                    try {
+                        const parsed = JSON.parse(data);
+                        const content = parsed.choices[0]?.delta?.content;
+                        if (content) {
+                            fullResponse += content;
+                        }
+                    } catch (e) {
+                        // 忽略解析错误
+                    }
+                }
+            }
+        }
+        
+        return fullResponse;
     }
 
     async onLayoutReady() {
@@ -491,6 +614,9 @@ export default class PluginSample extends Plugin {
                     <button class="step-btn" data-step="result" disabled style="flex: 1; padding: 8px 12px; border: 1px solid var(--b3-theme-border); border-radius: 4px; background-color: var(--b3-theme-surface-light); color: var(--b3-theme-on-surface-light); cursor: not-allowed; transition: all 0.2s ease;">
                         2. 请求结果
                     </button>
+                    <button class="step-btn" data-step="aiChat" style="flex: 1; padding: 8px 12px; border: 1px solid var(--b3-theme-border); border-radius: 4px; background-color: var(--b3-theme-background); color: var(--b3-theme-on-surface); cursor: pointer; transition: all 0.2s ease;">
+                        🤖 AI 聊天
+                    </button>
                 </div>
                 
                 <!-- 内容区域 -->
@@ -519,8 +645,8 @@ export default class PluginSample extends Plugin {
         const stepBtns = element.querySelectorAll(".step-btn");
         stepBtns.forEach(btn => {
             btn.addEventListener("click", (e) => {
-                const step = (e.target as HTMLElement).closest(".step-btn")?.getAttribute("data-step") as "send" | "result";
-                if (step && this.canNavigateToStep(step)) {
+                const step = (e.target as HTMLElement).closest(".step-btn")?.getAttribute("data-step") as "send" | "result" | "aiChat";
+                if (step) {
                     this.dialogState.step = step;
                     this.updateSidebarDialog();
                 }
@@ -563,6 +689,9 @@ export default class PluginSample extends Plugin {
             case "history":
                 this.renderHistoryStep(contentElement);
                 break;
+            case "aiChat":
+                this.renderAIChatStep(contentElement);
+                break;
         }
     }
     
@@ -579,31 +708,25 @@ export default class PluginSample extends Plugin {
         // 显示步骤导航
         stepNav?.setAttribute("style", "display: flex; align-items: center; margin-bottom: 20px; gap: 8px;");
         
-        if (stepBtns.length !== 2) return;
+        if (stepBtns.length < 3) return;
         
-        const stepOrder = { send: 0, result: 1 };
-        const currentStepOrder = stepOrder[this.dialogState.step as "send" | "result"] || 0;
+        // 为所有步骤按钮启用点击
+        stepBtns.forEach(btn => {
+            btn.removeAttribute("disabled");
+            btn.style.cursor = "pointer";
+        });
         
-        stepBtns.forEach((btn, index) => {
-            const step = btn.getAttribute("data-step") as "send" | "result";
-            if (index < currentStepOrder) {
-                // 已完成步骤
-                btn.removeAttribute("disabled");
-                btn.style.backgroundColor = "var(--b3-theme-primary-light)";
-                btn.style.color = "var(--b3-theme-on-primary)";
-                btn.style.cursor = "pointer";
-            } else if (index === currentStepOrder) {
+        // 更新按钮样式
+        stepBtns.forEach(btn => {
+            const step = btn.getAttribute("data-step") as "send" | "result" | "aiChat";
+            if (step === this.dialogState.step) {
                 // 当前步骤
-                btn.removeAttribute("disabled");
                 btn.style.backgroundColor = "var(--b3-theme-primary)";
                 btn.style.color = "white";
-                btn.style.cursor = "pointer";
             } else {
-                // 未完成步骤
-                btn.setAttribute("disabled", "disabled");
-                btn.style.backgroundColor = "var(--b3-theme-surface-light)";
-                btn.style.color = "var(--b3-theme-on-surface-light)";
-                btn.style.cursor = "not-allowed";
+                // 非当前步骤
+                btn.style.backgroundColor = "var(--b3-theme-background)";
+                btn.style.color = "var(--b3-theme-on-surface)";
             }
         });
     }
@@ -640,18 +763,18 @@ export default class PluginSample extends Plugin {
                                 </h4>
                                 <p style="margin: 4px 0 0 0; font-size: 12px; color: var(--b3-theme-on-surface-light);">${timestamp}</p>
                             </div>
-                            <div class="b3-label ${isError ? 'b3-label--error' : 'b3-label--success'}">
-                                ${isError ? '失败' : '成功'}
+                            <div class="b3-label ${isError ? "b3-label--error" : "b3-label--success"}">
+                                ${isError ? "失败" : "成功"}
                             </div>
                         </div>
                         <div style="font-size: 12px; color: var(--b3-theme-on-surface-light); margin-bottom: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                            选中文本: ${item.selectedText.length > 50 ? item.selectedText.substring(0, 50) + '...' : item.selectedText}
+                            选中文本: ${item.selectedText.length > 50 ? item.selectedText.substring(0, 50) + "..." : item.selectedText}
                         </div>
                         ${isError ? `
                             <div class="b3-label--error" style="font-size: 12px; padding: 4px 8px; margin-top: 4px;">
                                 错误: ${item.error}
                             </div>
-                        ` : ''}
+                        ` : ""}
                     </div>
                 `;
             });
@@ -689,9 +812,9 @@ export default class PluginSample extends Plugin {
         
         const isError = !!historyItem.error;
         const formattedRequest = JSON.stringify(historyItem.requestData, null, 2);
-        const formattedResponse = historyItem.responseData ? JSON.stringify(historyItem.responseData, null, 2) : '';
+        const formattedResponse = historyItem.responseData ? JSON.stringify(historyItem.responseData, null, 2) : "";
         
-        let html = `
+        const html = `
             <div style="margin-bottom: 20px;">
                 <div style="display: flex; align-items: center; margin-bottom: 16px;">
                     <button class="b3-button" id="back-to-history" style="margin-right: 12px;">
@@ -744,7 +867,7 @@ export default class PluginSample extends Plugin {
                             <svg class="b3-button__icon"><use xlink:href="#iconCopy"></use></svg>
                             <span>复制结果</span>
                         </button>
-                    ` : ''}
+                    ` : ""}
                 </div>
             </div>
         `;
@@ -1021,6 +1144,110 @@ export default class PluginSample extends Plugin {
         }
     }
     
+    private async sendAIChatMessage() {
+        const userMessage = this.dialogState.aiChatInput.trim();
+        if (!userMessage) return;
+        
+        // 添加用户消息到聊天记录
+        const userChatMessage: AIChatMessage = {
+            role: "user",
+            content: userMessage,
+            timestamp: Date.now()
+        };
+        this.dialogState.aiChatMessages.push(userChatMessage);
+        
+        // 清空输入框
+        this.dialogState.aiChatInput = "";
+        this.dialogState.aiChatLoading = true;
+        this.dialogState.aiChatError = null;
+        
+        // 更新界面
+        this.updateSidebarDialog();
+        
+        try {
+            // 发送 AI 聊天请求
+            const response = await this.sendAIChatRequest(this.dialogState.aiChatMessages);
+            
+            // 添加 AI 回复到聊天记录
+            const aiChatMessage: AIChatMessage = {
+                role: "assistant",
+                content: response,
+                timestamp: Date.now()
+            };
+            this.dialogState.aiChatMessages.push(aiChatMessage);
+            
+        } catch (error) {
+            this.dialogState.aiChatError = error instanceof Error ? error.message : "发送失败";
+            console.error("AI 聊天发送失败:", error);
+        } finally {
+            this.dialogState.aiChatLoading = false;
+            this.updateSidebarDialog();
+        }
+    }
+    
+    private async saveAIChatHistory() {
+        if (this.dialogState.aiChatMessages.length === 0) return;
+        
+        // 生成聊天标题（使用第一条消息的内容）
+        const firstMessage = this.dialogState.aiChatMessages[0];
+        const chatTitle = firstMessage.content.substring(0, 30) + (firstMessage.content.length > 30 ? "..." : "");
+        
+        if (this.dialogState.currentAIChatId) {
+            // 更新现有聊天历史
+            const existingChatIndex = this.dialogState.aiChatHistory.findIndex(
+                chat => chat.id === this.dialogState.currentAIChatId
+            );
+            
+            if (existingChatIndex >= 0) {
+                this.dialogState.aiChatHistory[existingChatIndex] = {
+                    ...this.dialogState.aiChatHistory[existingChatIndex],
+                    messages: [...this.dialogState.aiChatMessages],
+                    updatedAt: Date.now()
+                };
+            }
+        } else {
+            // 创建新聊天历史
+            const newChat: AIChatHistory = {
+                id: `ai-chat-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+                title: chatTitle,
+                messages: [...this.dialogState.aiChatMessages],
+                createdAt: Date.now(),
+                updatedAt: Date.now()
+            };
+            
+            this.dialogState.aiChatHistory.unshift(newChat);
+            this.dialogState.currentAIChatId = newChat.id;
+            
+            // 限制聊天历史数量
+            if (this.dialogState.aiChatHistory.length > 50) {
+                this.dialogState.aiChatHistory = this.dialogState.aiChatHistory.slice(0, 50);
+            }
+        }
+        
+        // 保存到配置
+        if (this.config) {
+            this.config.aiChatHistory = this.dialogState.aiChatHistory;
+            await this.saveConfig();
+        }
+    }
+    
+    private loadAIChatHistory(chatId: string) {
+        const chatHistory = this.dialogState.aiChatHistory.find(chat => chat.id === chatId);
+        if (chatHistory) {
+            this.dialogState.aiChatMessages = [...chatHistory.messages];
+            this.dialogState.currentAIChatId = chatId;
+            this.updateSidebarDialog();
+        }
+    }
+    
+    private newAIChatSession() {
+        this.dialogState.aiChatMessages = [];
+        this.dialogState.aiChatInput = "";
+        this.dialogState.currentAIChatId = null;
+        this.dialogState.aiChatError = null;
+        this.updateSidebarDialog();
+    }
+    
     private renderResultStep(element: Element) {
         if (this.dialogState.error) {
             element.innerHTML = `
@@ -1108,6 +1335,130 @@ export default class PluginSample extends Plugin {
         }
     }
     
+    private renderAIChatStep(element: Element) {
+        element.innerHTML = `
+            <div style="display: flex; flex-direction: column; height: 100%; padding: 16px; box-sizing: border-box;">
+                <!-- 聊天消息区域 -->
+                <div id="chat-messages" style="flex: 1; overflow-y: auto; padding: 16px; border-radius: 8px; background-color: var(--b3-theme-surface); margin-bottom: 16px; gap: 12px; display: flex; flex-direction: column;">
+                    ${this.dialogState.aiChatMessages.length > 0 ? 
+                        this.dialogState.aiChatMessages.map(msg => `
+                            <div class="chat-message ${msg.role}" style="margin-bottom: 16px; display: flex; ${msg.role === 'user' ? 'justify-content: flex-end;' : ''}">
+                                <div style="${msg.role === 'user' ? 'order: 2; margin-left: 12px;' : 'order: 1; margin-right: 12px;'}">
+                                    <div style="width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 16px; ${msg.role === 'user' ? 'background-color: var(--b3-theme-primary); color: white;' : 'background-color: var(--b3-theme-surface-light); color: var(--b3-theme-on-surface);'}">
+                                        ${msg.role === "user" ? "👤" : "🤖"}
+                                    </div>
+                                </div>
+                                <div style="flex: 1; max-width: 80%; ${msg.role === 'user' ? 'order: 1;' : 'order: 2;'}">
+                                    <div style="display: flex; align-items: center; margin-bottom: 4px;">
+                                        <span style="font-size: 12px; font-weight: bold; ${msg.role === 'user' ? 'color: var(--b3-theme-primary);' : 'color: var(--b3-theme-on-surface);'}">
+                                            ${msg.role === "user" ? "你" : "AI"}
+                                        </span>
+                                        <span style="font-size: 10px; color: var(--b3-theme-on-surface-light); margin-left: 8px;">
+                                            ${new Date(msg.timestamp).toLocaleTimeString()}
+                                        </span>
+                                    </div>
+                                    <div style="padding: 12px; border-radius: 12px; line-height: 1.4; font-size: 14px; ${msg.role === 'user' ? 'background-color: var(--b3-theme-primary-light); color: var(--b3-theme-on-primary); border-bottom-right-radius: 4px;' : 'background-color: var(--b3-theme-surface-light); color: var(--b3-theme-on-surface); border-bottom-left-radius: 4px;'}">
+                                        ${msg.content}
+                                    </div>
+                                </div>
+                            </div>
+                        `).join("") : 
+                        '<div style="text-align: center; padding: 48px 24px; color: var(--b3-theme-on-surface-light);">' +
+                        '<div style="font-size: 32px; margin-bottom: 12px;">🤖</div>' +
+                        '<div style="font-size: 16px; margin-bottom: 8px;">开始与 AI 聊天吧</div>' +
+                        '<div style="font-size: 14px; line-height: 1.4;">你可以询问任何问题，获取帮助</div>' +
+                        '</div>'
+                    }
+                    ${this.dialogState.aiChatLoading ? 
+                        '<div class="chat-message assistant" style="margin-bottom: 16px; display: flex;">' +
+                        '<div style="margin-right: 12px;">' +
+                        '<div style="width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 16px; background-color: var(--b3-theme-surface-light); color: var(--b3-theme-on-surface);">🤖</div>' +
+                        '</div>' +
+                        '<div style="flex: 1; max-width: 80%;">' +
+                        '<div style="display: flex; align-items: center; margin-bottom: 4px;">' +
+                        '<span style="font-size: 12px; font-weight: bold; color: var(--b3-theme-on-surface);">AI</span>' +
+                        '</div>' +
+                        '<div style="padding: 12px; border-radius: 12px; background-color: var(--b3-theme-surface-light); color: var(--b3-theme-on-surface); border-bottom-left-radius: 4px;">' +
+                        '<div class="b3-loading" style="margin: 8px 0;"></div>' +
+                        '</div>' +
+                        '</div>' +
+                        '</div>' : ""
+                    }
+                    ${this.dialogState.aiChatError ? 
+                        '<div class="chat-message error" style="margin-bottom: 16px; display: flex;">' +
+                        '<div style="margin-right: 12px;">' +
+                        '<div style="width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 16px; background-color: var(--b3-theme-error-light); color: var(--b3-theme-error);">⚠️</div>' +
+                        '</div>' +
+                        '<div style="flex: 1; max-width: 80%;">' +
+                        '<div style="display: flex; align-items: center; margin-bottom: 4px;">' +
+                        '<span style="font-size: 12px; font-weight: bold; color: var(--b3-theme-error);">错误</span>' +
+                        '</div>' +
+                        '<div style="padding: 12px; border-radius: 12px; background-color: var(--b3-theme-error-light); color: var(--b3-theme-error); border-bottom-left-radius: 4px; font-size: 14px; line-height: 1.4;">' +
+                        this.dialogState.aiChatError +
+                        '</div>' +
+                        '</div>' +
+                        '</div>' : ""
+                    }
+                </div>
+                
+                <!-- 输入区域 -->
+                <div style="display: flex; gap: 12px; padding: 16px; background-color: var(--b3-theme-surface); border-radius: 8px; box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.1); margin-bottom: 24px;">
+                    <textarea 
+                        id="ai-chat-input" 
+                        style="flex: 1; padding: 12px; border: 1px solid var(--b3-theme-border); border-radius: 8px; resize: none; min-height: 48px; max-height: 150px; font-size: 14px; font-family: var(--b3-font-family); background-color: var(--b3-theme-background); color: var(--b3-theme-on-background);"
+                        placeholder="输入消息..."
+                        ${this.dialogState.aiChatLoading ? "disabled" : ""}
+                    ></textarea>
+                    <button 
+                        class="b3-button b3-button--primary" 
+                        id="send-ai-chat-btn" 
+                        ${this.dialogState.aiChatLoading ? "disabled" : ""}
+                        style="padding: 0 20px; border-radius: 8px; font-size: 14px; font-weight: 500; min-width: 80px; display: flex; align-items: center; justify-content: center; gap: 4px;"
+                    >
+                        <svg class="b3-button__icon"><use xlink:href="#iconSend"></use></svg>
+                        <span>发送</span>
+                    </button>
+                </div>
+            </div>
+        `;
+        
+        // 添加发送按钮事件
+        const sendBtn = element.querySelector("#send-ai-chat-btn");
+        if (sendBtn) {
+            sendBtn.addEventListener("click", async () => {
+                const chatInput = element.querySelector("#ai-chat-input") as HTMLTextAreaElement;
+                if (chatInput) {
+                    this.dialogState.aiChatInput = chatInput.value;
+                }
+                await this.sendAIChatMessage();
+            });
+        }
+        
+        // 添加输入框回车发送事件
+        const chatInput = element.querySelector("#ai-chat-input") as HTMLTextAreaElement;
+        if (chatInput) {
+            chatInput.addEventListener("keydown", async (e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    this.dialogState.aiChatInput = chatInput.value;
+                    await this.sendAIChatMessage();
+                }
+            });
+            
+            // 自动调整输入框高度
+            chatInput.addEventListener("input", () => {
+                chatInput.style.height = "auto";
+                chatInput.style.height = Math.min(chatInput.scrollHeight, 150) + "px";
+            });
+        }
+        
+        // 滚动到底部
+        const chatMessages = element.querySelector("#chat-messages");
+        if (chatMessages) {
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+    }
+    
     private formatResponse(data: any, menu: MenuConfig, selectedText: string): string {
         const getValueByPath = (obj: any, path: string): any => {
             if (obj === null || obj === undefined) return undefined;
@@ -1154,7 +1505,7 @@ export default class PluginSample extends Plugin {
                     };
                     // 递归渲染数组项内容
                     return renderTemplate(content, itemContext);
-                }).join('');
+                }).join("");
             });
             
             // 处理普通变量替换
@@ -1622,8 +1973,8 @@ export default class PluginSample extends Plugin {
         htmlContent += '<div style="margin-bottom: 16px;">';
         htmlContent += '<label style="display: block; margin-bottom: 8px; color: var(--b3-theme-on-surface);">Method: </label>';
         htmlContent += '<select style="width: 100%; padding: 8px; border: 1px solid var(--b3-theme-border); border-radius: 4px; background-color: var(--b3-theme-surface-light); color: var(--b3-theme-on-surface);" class="menu-method" data-id="' + menu.id + '">';
-        htmlContent += '<option value="POST"' + (menu.method === "POST" ? " selected" : "") + '>POST</option>';
-        htmlContent += '<option value="GET"' + (menu.method === "GET" ? " selected" : "") + '>GET</option>';
+        htmlContent += '<option value="POST"' + (menu.method === "POST" ? " selected" : "") + ">POST</option>";
+        htmlContent += '<option value="GET"' + (menu.method === "GET" ? " selected" : "") + ">GET</option>";
         htmlContent += "</select>";
         htmlContent += "</div>";
         htmlContent += '<div style="margin-bottom: 16px;">';
@@ -1639,22 +1990,22 @@ export default class PluginSample extends Plugin {
         htmlContent += '<div id="advancedOptionsContent" style="display: none; margin-top: 16px;">';
         htmlContent += '<div style="margin-bottom: 16px;">';
         htmlContent += '<label style="display: block; margin-bottom: 8px; color: var(--b3-theme-on-surface);">Headers: </label>';
-        htmlContent += '<textarea style="width: 100%; padding: 8px; border: 1px solid var(--b3-theme-border); border-radius: 4px; background-color: var(--b3-theme-surface-light); color: var(--b3-theme-on-surface); height: 100px;" class="menu-headers" data-id="' + menu.id + '" placeholder="{\n  \"Content-Type\": \"application/json\",\n  \"Authorization\": \"Bearer token\"\n}">' + headersJson + '</textarea>';
-        htmlContent += '</div>';
+        htmlContent += '<textarea style="width: 100%; padding: 8px; border: 1px solid var(--b3-theme-border); border-radius: 4px; background-color: var(--b3-theme-surface-light); color: var(--b3-theme-on-surface); height: 100px;" class="menu-headers" data-id="' + menu.id + '" placeholder="{\n  \"Content-Type\": \"application/json\",\n  \"Authorization\": \"Bearer token\"\n}">' + headersJson + "</textarea>";
+        htmlContent += "</div>";
         htmlContent += '<div style="margin-bottom: 16px;">';
         htmlContent += '<label style="display: block; margin-bottom: 8px; color: var(--b3-theme-on-surface);">响应模板: </label>';
-        htmlContent += '<textarea style="width: 100%; padding: 8px; border: 1px solid var(--b3-theme-border); border-radius: 4px; background-color: var(--b3-theme-surface-light); color: var(--b3-theme-on-surface); height: 120px;" class="menu-template" data-id="' + menu.id + '" placeholder="# 响应结果\n\n## 匹配列表\n\${each(matches.matchlist as item)}\n- \${item.content}\n\${end}\n\n## 原始响应\n\${data}">' + (menu.template || '') + '</textarea>';
+        htmlContent += '<textarea style="width: 100%; padding: 8px; border: 1px solid var(--b3-theme-border); border-radius: 4px; background-color: var(--b3-theme-surface-light); color: var(--b3-theme-on-surface); height: 120px;" class="menu-template" data-id="' + menu.id + '" placeholder="# 响应结果\n\n## 匹配列表\n\${each(matches.matchlist as item)}\n- \${item.content}\n\${end}\n\n## 原始响应\n\${data}">' + (menu.template || "") + "</textarea>";
         htmlContent += '<p style="margin-top: 4px; color: var(--b3-theme-on-surface-light); font-size: 12px;">使用模板定制化显示响应数据：</p>';
         htmlContent += '<ul style="margin-top: 4px; margin-bottom: 8px; color: var(--b3-theme-on-surface-light); font-size: 12px; padding-left: 20px;">';
-        htmlContent += '<li>显示整个响应: \${data}</li>';
-        htmlContent += '<li>显示选中的文本: \${selectText}</li>';
-        htmlContent += '<li>显示单个字段: \${matches.message}</li>';
-        htmlContent += '<li>显示数组元素: \${matches.matchlist[0].content}</li>';
-        htmlContent += '<li>遍历数组: \${each(matches.matchlist as item)}\n- \${item.content}\n\${end}</li>';
-        htmlContent += '</ul>';
+        htmlContent += "<li>显示整个响应: \${data}</li>";
+        htmlContent += "<li>显示选中的文本: \${selectText}</li>";
+        htmlContent += "<li>显示单个字段: \${matches.message}</li>";
+        htmlContent += "<li>显示数组元素: \${matches.matchlist[0].content}</li>";
+        htmlContent += "<li>遍历数组: \${each(matches.matchlist as item)}\n- \${item.content}\n\${end}</li>";
+        htmlContent += "</ul>";
         htmlContent += '<p style="margin-top: 4px; color: var(--b3-theme-on-surface-light); font-size: 12px;">示例：只显示匹配列表中的内容字段</p>';
         htmlContent += '<pre style="margin-top: 4px; margin-bottom: 4px; color: var(--b3-theme-on-surface-light); font-size: 12px; background-color: var(--b3-theme-surface-light); padding: 8px; border-radius: 4px;">\${each(matches.matchlist as item)}\n- \${item.content}\n\${end}</pre>';
-        htmlContent += '</div>';
+        htmlContent += "</div>";
 
         htmlContent += '<p style="margin-bottom: 16px; color: var(--b3-theme-on-surface-light); font-size: 14px;">这些选项用于控制菜单何时显示：</p>';
         htmlContent += '<div style="margin-bottom: 16px;">';
