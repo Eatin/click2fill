@@ -401,71 +401,242 @@ export default class PluginSample extends Plugin {
             throw new Error("请先在思源笔记设置中配置 OpenAI API 密钥和基础 URL");
         }
         
-        const apiKey = aiConfig.openAI.apiKey;
-        const apiBaseURL = aiConfig.openAI.apiBaseURL;
-        const model = aiConfig.openAI.apiModel || "gpt-3.5-turbo";
-        
-        const url = `${apiBaseURL.endsWith("/") ? apiBaseURL : apiBaseURL + "/"}chat/completions`;
-        
+        // 准备请求消息
         const requestMessages = messages.map(msg => ({
             role: msg.role === 'request' || msg.role === 'response' ? 'user' : msg.role,
             content: msg.content
         }));
         
-        const options: any = {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${apiKey}`
-            },
-            body: JSON.stringify({
-                model,
-                messages: requestMessages,
-                stream: true
-            })
+        // 直接调用 AI API，跳过内置 chatGPT API
+        return this.sendDirectOpenAIRequest(requestMessages);
+    }
+    
+    private async sendDirectOpenAIRequest(messages: { role: string; content: string }[]): Promise<string> {
+        const globalSiyuan = (globalThis as any).siyuan;
+        const config = this.app?.config || globalSiyuan?.config;
+        const aiConfig = config?.ai || config?.openAI;
+        
+        const apiKey = aiConfig.openAI.apiKey;
+        const apiBaseURL = aiConfig.openAI.apiBaseURL;
+        const model = aiConfig.openAI.apiModel || "gpt-3.5-turbo";
+        const apiProxy = aiConfig.openAI.apiProxy || aiConfig.apiProxy;
+        const apiUserAgent = aiConfig.openAI.apiUserAgent || aiConfig.apiUserAgent;
+        
+        // 读取 AI 配置中的 header 部分
+        const aiHeaders = aiConfig.openAI?.headers || aiConfig?.headers || {};
+        
+        // 准备完整的 API URL
+        const targetUrl = `${apiBaseURL.endsWith("/") ? apiBaseURL : apiBaseURL + "/"}chat/completions`;
+        
+        // 准备请求体
+        const requestBody = JSON.stringify({
+            model,
+            messages,
+            stream: true
+        });
+        
+        // 确定最终使用的 User-Agent
+        const finalUserAgent = aiHeaders["User-Agent"] || aiHeaders["user-agent"] || apiUserAgent || "Siyuan-Click2Fill-Plugin";
+        
+        // 准备请求头，优先使用 header 中的 user-agent
+        const headers = {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${apiKey}`,
+            "User-Agent": finalUserAgent,
+            // 合并其他 header 配置
+            ...aiHeaders
         };
         
-        const response = await fetch(url, options);
+        // 确保 Content-Type 和 Authorization 不被覆盖
+        headers["Content-Type"] = "application/json";
+        headers["Authorization"] = `Bearer ${apiKey}`;
         
-        if (!response.ok) {
-            const errorData = await response.json().catch(() => ({}));
-            throw new Error(`AI 聊天请求失败: ${errorData.error?.message || `HTTP error! status: ${response.status}`}`);
-        }
+        // 确保 User-Agent 不被覆盖
+        headers["User-Agent"] = finalUserAgent;
         
-        const reader = response.body?.getReader();
-        if (!reader) {
-            throw new Error("无法读取响应流");
-        }
-        
-        let fullResponse = "";
-        const decoder = new TextDecoder();
-        
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            
-            const chunk = decoder.decode(value, { stream: true });
-            const lines = chunk.split("\n");
-            
-            for (const line of lines) {
-                if (line.startsWith("data: ")) {
-                    const data = line.substring(6);
-                    if (data === "[DONE]") continue;
-                    
+        // 直接调用 AI API
+        try {
+            // 检查是否配置了代理
+            if (apiProxy) {
+                // 使用代理服务器发送请求
+                
+                // 确保代理服务器 URL 是 http:// 或 https:// 协议
+                let proxyServerUrl = apiProxy;
+                if (proxyServerUrl.startsWith('socks://') || proxyServerUrl.startsWith('socks5://')) {
+                    // 对于 SOCKS 代理，我们仍然使用本地的 HTTP 代理服务器
+                    // 然后让代理服务器使用 SOCKS 代理发送请求
+                    proxyServerUrl = 'http://localhost:3000';
+                }
+                
+                // 准备代理请求体
+                const proxyRequestBody = JSON.stringify({
+                    url: targetUrl,
+                    method: 'POST',
+                    headers,
+                    body: requestBody,
+                    proxy: apiProxy
+                });
+                
+                // 发送请求到代理服务器
+                const response = await fetch(proxyServerUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'User-Agent': headers['User-Agent']
+                    },
+                    body: proxyRequestBody
+                });
+                
+                if (!response.ok) {
+                    let errorMessage = `HTTP error! status: ${response.status}`;
                     try {
-                        const parsed = JSON.parse(data);
-                        const content = parsed.choices[0]?.delta?.content;
-                        if (content) {
-                            fullResponse += content;
+                        // 尝试读取响应体作为文本
+                        const responseText = await response.text();
+                        try {
+                            // 尝试解析为 JSON
+                            const errorData = JSON.parse(responseText);
+                            errorMessage = `代理服务器请求失败: ${errorData.error || errorMessage}`;
+                        } catch (jsonError) {
+                            // 如果不是 JSON，直接使用文本
+                            errorMessage = `代理服务器请求失败: ${responseText || errorMessage}`;
                         }
                     } catch (e) {
-                        // 忽略解析错误
+                        // 忽略读取错误
+                    }
+                    throw new Error(errorMessage);
+                }
+                
+                // 处理响应
+                const contentType = response.headers.get('content-type');
+                if (contentType && contentType.includes('application/json')) {
+                    // 处理 JSON 响应
+                    const jsonResponse = await response.json();
+                    if (jsonResponse.error) {
+                        throw new Error(`AI 聊天请求失败: ${jsonResponse.error}`);
+                    }
+                    return jsonResponse.content || jsonResponse.data || "";
+                } else {
+                    // 处理流式响应
+                    const reader = response.body?.getReader();
+                    if (!reader) {
+                        throw new Error("无法读取响应流");
+                    }
+                    
+                    let fullResponse = "";
+                    const decoder = new TextDecoder();
+                    
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) {
+                            break;
+                        }
+                        
+                        const chunk = decoder.decode(value, { stream: true });
+                        const lines = chunk.split("\n");
+                        
+                        for (const line of lines) {
+                            // 更灵活地判断是否为 data 行，忽略大小写和空格差异
+                            const trimmedLine = line.trim();
+                            
+                            if (trimmedLine.toLowerCase().startsWith("data:")) {
+                                // 提取 data 部分，忽略 "data:" 后的空格
+                                const dataStartIndex = trimmedLine.indexOf(":") + 1;
+                                const data = trimmedLine.substring(dataStartIndex).trim();
+                                
+                                if (data === "[DONE]") {
+                                    continue;
+                                }
+                                
+                                try {
+                                    const parsed = JSON.parse(data);
+                                    
+                                    if (parsed.error) {
+                                        throw new Error(`AI 聊天请求失败: ${parsed.error.message}`);
+                                    }
+                                    
+                                    const content = parsed.choices[0]?.delta?.content;
+                                    if (content) {
+                                        fullResponse += content;
+                                    }
+                                } catch (e) {
+                                    // 忽略解析错误
+                                }
+                            }
+                        }
+                    }
+                    
+                    if (!fullResponse) {
+                        throw new Error("AI 聊天请求成功，但未收到任何响应内容");
+                    }
+                    
+                    return fullResponse;
+                }
+            } else {
+                // 不使用代理，直接发送请求
+                
+                const response = await fetch(targetUrl, {
+                    method: 'POST',
+                    headers,
+                    body: requestBody
+                });
+                
+                if (!response.ok) {
+                    try {
+                        const errorData = await response.json();
+                        throw new Error(`AI 聊天请求失败: ${errorData.error?.message || `HTTP error! status: ${response.status}`}`);
+                    } catch (e) {
+                        const errorText = await response.text();
+                        throw new Error(`AI 聊天请求失败: ${errorText || `HTTP error! status: ${response.status}`}`);
                     }
                 }
+                
+                const reader = response.body?.getReader();
+                if (!reader) {
+                    throw new Error("无法读取响应流");
+                }
+                
+                let fullResponse = "";
+                const decoder = new TextDecoder();
+                
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    
+                    const chunk = decoder.decode(value, { stream: true });
+                    const lines = chunk.split("\n");
+                    
+                    for (const line of lines) {
+                        if (line.startsWith("data: ")) {
+                            const data = line.substring(6);
+                            if (data === "[DONE]") continue;
+                            
+                            try {
+                                const parsed = JSON.parse(data);
+                                
+                                if (parsed.error) {
+                                    throw new Error(`AI 聊天请求失败: ${parsed.error.message}`);
+                                }
+                                
+                                const content = parsed.choices[0]?.delta?.content;
+                                if (content) {
+                                    fullResponse += content;
+                                }
+                            } catch (e) {
+                                // 忽略解析错误
+                            }
+                        }
+                    }
+                }
+                
+                if (!fullResponse) {
+                    throw new Error("AI 聊天请求成功，但未收到任何响应内容");
+                }
+                
+                return fullResponse;
             }
+        } catch (error) {
+            throw error;
         }
-        
-        return fullResponse;
     }
 
     async onLayoutReady() {

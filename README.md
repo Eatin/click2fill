@@ -30,6 +30,10 @@ Click2Fill is a powerful plugin for SiYuan that allows you to select text, send 
 * **History Management**: Saves last 100 API calls for reference
 * **Non-intrusive Startup**: Dialog remains inactive by default for cleaner startup
 * **Clean Console**: Reduced logging for better performance
+* **AI Chat Integration**: Support for AI chat functionality with proxy configuration
+* **Proxy Support**: Configure HTTP, HTTPS, and SOCKS proxies for API requests
+* **User-Agent Configuration**: Customize User-Agent for API requests
+* **Offline Support**: Includes offline resource files for use in offline environments
 
 ## Installation
 
@@ -46,6 +50,8 @@ Click2Fill is a powerful plugin for SiYuan that allows you to select text, send 
 
 ## Configuration
 
+### API Endpoint Configuration
+
 1. Select text in your document
 2. Press `⇧⌘I` (Shift+Command+I)
 3. Click the "Configure" option in the menu
@@ -58,6 +64,17 @@ Click2Fill is a powerful plugin for SiYuan that allows you to select text, send 
    - **Params**: Custom parameters (JSON format)
    - **Response Type**: How to parse the response
    - **Template**: Optional template for formatting response
+
+### AI Chat Configuration
+
+1. Open SiYuan settings
+2. Navigate to the "AI" section
+3. Configure the following settings:
+   - **API Key**: Your OpenAI API key
+   - **API Base URL**: The base URL for your AI API
+   - **API Proxy**: Optional proxy server URL (supports HTTP, HTTPS, and SOCKS protocols)
+     - Example: `http://localhost:3000` or `socks://127.0.0.1:1080`
+   - **API User Agent**: Optional custom User-Agent for API requests
 
 ## Development
 
