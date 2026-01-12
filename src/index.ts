@@ -305,34 +305,40 @@ export default class PluginSample extends Plugin {
     }
     
     private async sendRequest(menu: MenuConfig, selectedText: string): Promise<any> {
-        const requestData: any = {
-            text: selectedText
-        };
+        // 优先使用 this.dialogState.requestData，如果没有才创建新的
+        let requestData = this.dialogState.requestData;
         
-        if (menu.params) {
-            const paramsCopy = JSON.parse(JSON.stringify(menu.params));
-            
-            const replaceSelectText = (obj: any): any => {
-                if (typeof obj === "string") {
-                    return obj.replace(/\$\{selectText\}/g, selectedText);
-                } else if (typeof obj === "object" && obj !== null) {
-                    if (Array.isArray(obj)) {
-                        return obj.map(item => replaceSelectText(item));
-                    } else {
-                        const result: any = {};
-                        for (const key in obj) {
-                            if (obj.hasOwnProperty(key)) {
-                                result[key] = replaceSelectText(obj[key]);
-                            }
-                        }
-                        return result;
-                    }
-                }
-                return obj;
+        // 如果没有 requestData，或者 requestData 不是对象，则创建新的
+        if (!requestData || typeof requestData !== "object") {
+            requestData = {
+                text: selectedText
             };
             
-            const processedParams = replaceSelectText(paramsCopy);
-            Object.assign(requestData, processedParams);
+            if (menu.params) {
+                const paramsCopy = JSON.parse(JSON.stringify(menu.params));
+                
+                const replaceSelectText = (obj: any): any => {
+                    if (typeof obj === "string") {
+                        return obj.replace(/\$\{selectText\}/g, selectedText);
+                    } else if (typeof obj === "object" && obj !== null) {
+                        if (Array.isArray(obj)) {
+                            return obj.map(item => replaceSelectText(item));
+                        } else {
+                            const result: any = {};
+                            for (const key in obj) {
+                                if (obj.hasOwnProperty(key)) {
+                                    result[key] = replaceSelectText(obj[key]);
+                                }
+                            }
+                            return result;
+                        }
+                    }
+                    return obj;
+                };
+                
+                const processedParams = replaceSelectText(paramsCopy);
+                Object.assign(requestData, processedParams);
+            }
         }
         
         const globalSiyuan = (globalThis as any).siyuan;
@@ -392,7 +398,7 @@ export default class PluginSample extends Plugin {
         return data;
     }
     
-    private async sendAIChatRequest(messages: AIChatMessage[]): Promise<string> {
+    private async sendAIChatRequest(messages: AIChatMessage[], onChunkReceived?: (chunk: string) => void): Promise<string> {
         const globalSiyuan = (globalThis as any).siyuan;
         const config = this.app?.config || globalSiyuan?.config;
         const aiConfig = config?.ai || config?.openAI;
@@ -408,10 +414,10 @@ export default class PluginSample extends Plugin {
         }));
         
         // 直接调用 AI API，跳过内置 chatGPT API
-        return this.sendDirectOpenAIRequest(requestMessages);
+        return this.sendDirectOpenAIRequest(requestMessages, onChunkReceived);
     }
     
-    private async sendDirectOpenAIRequest(messages: { role: string; content: string }[]): Promise<string> {
+    private async sendDirectOpenAIRequest(messages: { role: string; content: string }[], onChunkReceived?: (chunk: string) => void): Promise<string> {
         const globalSiyuan = (globalThis as any).siyuan;
         const config = this.app?.config || globalSiyuan?.config;
         const aiConfig = config?.ai || config?.openAI;
@@ -507,70 +513,65 @@ export default class PluginSample extends Plugin {
                 }
                 
                 // 处理响应
-                const contentType = response.headers.get('content-type');
-                if (contentType && contentType.includes('application/json')) {
-                    // 处理 JSON 响应
-                    const jsonResponse = await response.json();
-                    if (jsonResponse.error) {
-                        throw new Error(`AI 聊天请求失败: ${jsonResponse.error}`);
-                    }
-                    return jsonResponse.content || jsonResponse.data || "";
-                } else {
-                    // 处理流式响应
-                    const reader = response.body?.getReader();
-                    if (!reader) {
-                        throw new Error("无法读取响应流");
+                // 无论 content-type 是什么，都尝试处理流式响应
+                // 因为代理服务器可能会将流式响应包装在 JSON 中
+                const reader = response.body?.getReader();
+                if (!reader) {
+                    throw new Error("无法读取响应流");
+                }
+                
+                let fullResponse = "";
+                const decoder = new TextDecoder();
+                
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) {
+                        break;
                     }
                     
-                    let fullResponse = "";
-                    const decoder = new TextDecoder();
+                    const chunk = decoder.decode(value, { stream: true });
+                    const lines = chunk.split("\n");
                     
-                    while (true) {
-                        const { done, value } = await reader.read();
-                        if (done) {
-                            break;
-                        }
+                    for (const line of lines) {
+                        // 更灵活地判断是否为 data 行，忽略大小写和空格差异
+                        const trimmedLine = line.trim();
                         
-                        const chunk = decoder.decode(value, { stream: true });
-                        const lines = chunk.split("\n");
-                        
-                        for (const line of lines) {
-                            // 更灵活地判断是否为 data 行，忽略大小写和空格差异
-                            const trimmedLine = line.trim();
+                        if (trimmedLine.toLowerCase().startsWith("data:")) {
+                            // 提取 data 部分，忽略 "data:" 后的空格
+                            const dataStartIndex = trimmedLine.indexOf(":") + 1;
+                            const data = trimmedLine.substring(dataStartIndex).trim();
                             
-                            if (trimmedLine.toLowerCase().startsWith("data:")) {
-                                // 提取 data 部分，忽略 "data:" 后的空格
-                                const dataStartIndex = trimmedLine.indexOf(":") + 1;
-                                const data = trimmedLine.substring(dataStartIndex).trim();
+                            if (data === "[DONE]") {
+                                continue;
+                            }
+                            
+                            try {
+                                const parsed = JSON.parse(data);
                                 
-                                if (data === "[DONE]") {
-                                    continue;
+                                if (parsed.error) {
+                                    throw new Error(`AI 聊天请求失败: ${parsed.error.message}`);
                                 }
                                 
-                                try {
-                                    const parsed = JSON.parse(data);
-                                    
-                                    if (parsed.error) {
-                                        throw new Error(`AI 聊天请求失败: ${parsed.error.message}`);
+                                const content = parsed.choices[0]?.delta?.content;
+                                if (content) {
+                                    fullResponse += content;
+                                    // 实时调用回调函数，传递收到的内容
+                                    if (onChunkReceived) {
+                                        onChunkReceived(content);
                                     }
-                                    
-                                    const content = parsed.choices[0]?.delta?.content;
-                                    if (content) {
-                                        fullResponse += content;
-                                    }
-                                } catch (e) {
-                                    // 忽略解析错误
                                 }
+                            } catch (e) {
+                                // 忽略解析错误，因为数据可能不完整
                             }
                         }
                     }
-                    
-                    if (!fullResponse) {
-                        throw new Error("AI 聊天请求成功，但未收到任何响应内容");
-                    }
-                    
-                    return fullResponse;
                 }
+                
+                if (!fullResponse) {
+                    throw new Error("AI 聊天请求成功，但未收到任何响应内容");
+                }
+                
+                return fullResponse;
             } else {
                 // 不使用代理，直接发送请求
                 
@@ -620,6 +621,10 @@ export default class PluginSample extends Plugin {
                                 const content = parsed.choices[0]?.delta?.content;
                                 if (content) {
                                     fullResponse += content;
+                                    // 实时调用回调函数，传递收到的内容
+                                    if (onChunkReceived) {
+                                        onChunkReceived(content);
+                                    }
                                 }
                             } catch (e) {
                                 // 忽略解析错误
@@ -1240,15 +1245,25 @@ export default class PluginSample extends Plugin {
         const menu = this.dialogState.selectedMenu;
         const formattedRequest = JSON.stringify(this.dialogState.requestData, null, 2);
         
-        // 创建装配报文消息，使用HTML换行符保持样式一致
+        // 构建完整的装配报文内容，使用Markdown格式，去除JSON数据前后的空行
+        const fullContent = `**${menu.name} 装配报文**
+
+**请求信息**
+URL: ${menu.url}
+Method: ${menu.method}
+
+**请求数据**
+\`\`\`json
+${formattedRequest.trim()}
+\`\`\``;
+        
+        // 将Markdown转换为HTML
+        const htmlContent = this.markdownToHtml(fullContent);
+        
+        // 创建装配报文消息
         const assemblyMessage: AIChatMessage = {
             role: "request",
-            content: `**${menu.name} 装配报文**<br><br>` +
-                    `**请求信息**<br>` +
-                    `URL: ${menu.url}<br>` +
-                    `Method: ${menu.method}<br><br>` +
-                    `**请求数据**<br>` +
-                    `<pre style="background-color: var(--b3-theme-surface-light); padding: 12px; border-radius: 4px; overflow-x: auto; font-size: 12px; font-family: var(--b3-font-family-code);">${formattedRequest}</pre>`,
+            content: htmlContent,
             timestamp: Date.now()
         };
         
@@ -1280,10 +1295,17 @@ export default class PluginSample extends Plugin {
             responseContent = `<div style="color: var(--b3-theme-error);">${error || "请求失败"}</div>`;
         }
         
+        // 构建完整的消息内容，只包含请求结果标题
+        const fullContent = `**${menu.name} 请求结果**
+
+${responseContent}`;
+        
+        // 将完整内容转换为HTML
+        const htmlContent = this.markdownToHtml(fullContent);
+        
         const responseMessage: AIChatMessage = {
             role: "response",
-            content: `**${menu.name} 请求结果**<br><br>` +
-                    `**响应数据**<br>${responseContent}`,
+            content: htmlContent,
             timestamp: Date.now()
         };
         
@@ -1487,22 +1509,38 @@ ${trimmedCode}
         this.dialogState.aiChatLoading = true;
         this.dialogState.aiChatError = null;
         
-        // 更新界面
+        // 更新界面，显示加载状态
         this.updateSidebarDialog();
         
         try {
-            // 发送 AI 聊天请求
-            const response = await this.sendAIChatRequest(this.dialogState.aiChatMessages);
-            
-            // 添加 AI 回复到聊天记录
-            // 处理Markdown格式
-            const formattedResponse = this.markdownToHtml(response);
+            // 创建AI消息对象，用于实时更新
             const aiChatMessage: AIChatMessage = {
                 role: "assistant",
-                content: formattedResponse,
+                content: "",
                 timestamp: Date.now()
             };
-            this.dialogState.aiChatMessages.push(aiChatMessage);
+            
+            // 发送 AI 聊天请求，添加实时渲染回调
+            let fullResponse = "";
+            await this.sendAIChatRequest(this.dialogState.aiChatMessages, (chunk) => {
+                // 累加响应内容
+                fullResponse += chunk;
+                // 只有在收到第一个chunk时才添加消息对象到数组
+                if (fullResponse === chunk) {
+                    this.dialogState.aiChatMessages.push(aiChatMessage);
+                    // 收到第一个响应后，关闭加载状态
+                    this.dialogState.aiChatLoading = false;
+                }
+                // 更新AI消息内容并实时渲染
+                aiChatMessage.content = this.markdownToHtml(fullResponse);
+                // 更新界面
+                this.updateSidebarDialog();
+                // 滚动到底部
+                const chatMessages = document.querySelector("#chat-messages");
+                if (chatMessages) {
+                    chatMessages.scrollTop = chatMessages.scrollHeight;
+                }
+            });
             
         } catch (error) {
             this.dialogState.aiChatError = error instanceof Error ? error.message : "发送失败";
@@ -1510,6 +1548,11 @@ ${trimmedCode}
         } finally {
             this.dialogState.aiChatLoading = false;
             this.updateSidebarDialog();
+            // 滚动到底部
+            const chatMessages = document.querySelector("#chat-messages");
+            if (chatMessages) {
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+            }
         }
     }
     
@@ -1697,14 +1740,14 @@ ${trimmedCode}
         
         // 构建基础HTML结构
         element.innerHTML = `
-            <div style="display: flex; flex-direction: column; height: 100%; padding: 16px; box-sizing: border-box;">
+            <div style="display: flex; flex-direction: column; height: 100%; box-sizing: border-box;">
                 <!-- 聊天消息区域 -->
-                <div id="chat-messages" style="flex: 1; overflow-y: auto; padding: 16px; border-radius: 8px; background-color: var(--b3-theme-surface); margin-bottom: 16px; gap: 12px; display: flex; flex-direction: column;">
+                <div id="chat-messages" style="flex: 1; overflow-y: auto; padding: 8px; border-radius: 8px; background-color: var(--b3-theme-surface); gap: 8px; display: flex; flex-direction: column;">
                     ${allMessages.length > 0 ? 
                         allMessages.map((msg, index) => `
-                            <div class="chat-message ${msg.role}" data-message-index="${index}" style="margin-bottom: 16px; display: flex; ${msg.role === 'user' || msg.role === 'request' ? 'justify-content: flex-end;' : 'justify-content: flex-start;'}">
-                                <div style="${(msg.role === 'user' || msg.role === 'request') ? 'order: 2; margin-left: 12px;' : 'order: 1; margin-right: 12px;'}">
-                                    <div style="width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 16px; ${msg.role === 'user' ? 'background-color: var(--b3-theme-primary); color: white;' : msg.role === 'request' ? 'background-color: var(--b3-theme-warning); color: white;' : msg.role === 'response' ? 'background-color: var(--b3-theme-success); color: white;' : 'background-color: var(--b3-theme-surface-light); color: var(--b3-theme-on-surface);'}">
+                            <div class="chat-message ${msg.role}" data-message-index="${index}" style="margin-bottom: 12px; display: flex; ${msg.role === 'user' || msg.role === 'request' ? 'justify-content: flex-end;' : 'justify-content: flex-start;'}">
+                                <div style="${(msg.role === 'user' || msg.role === 'request') ? 'order: 2; margin-left: 8px;' : 'order: 1; margin-right: 8px;'}">
+                                    <div style="width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 16px; ${msg.role === 'user' ? 'background-color: var(--b3-theme-primary); color: white;' : msg.role === 'request' ? 'background-color: var(--b3-theme-warning); color: white;' : msg.role === 'response' ? 'background-color: var(--b3-theme-success); color: white;' : 'background-color: #6366f1; color: white;'}">
                                         ${msg.role === "user" ? "👤" : msg.role === "request" ? "📡" : msg.role === "response" ? "📊" : "🤖"}
                                     </div>
                                 </div>
@@ -1717,9 +1760,9 @@ ${trimmedCode}
                                             ${new Date(msg.timestamp).toLocaleTimeString()}
                                         </span>
                                     </div>
-                                    <div style="padding: 12px; border-radius: 12px; line-height: 1.4; font-size: 14px; ${msg.role === 'user' ? 'background-color: var(--b3-theme-primary); color: white; border-bottom-right-radius: 4px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);' : msg.role === 'request' || msg.role === 'response' ? 'background-color: var(--b3-theme-surface); color: var(--b3-theme-on-surface); border-bottom-left-radius: 4px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); border: 1px solid var(--b3-theme-border); user-select: text;' : 'background-color: var(--b3-theme-background); color: var(--b3-theme-on-background); border-bottom-left-radius: 4px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); border: 1px solid var(--b3-theme-border); user-select: text;'}" class="message-content"></div>
+                                    <div style="padding: 10px; border-radius: 12px; line-height: 1.4; font-size: 14px; ${msg.role === 'user' ? 'background-color: var(--b3-theme-primary); color: white; border-bottom-right-radius: 4px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);' : msg.role === 'request' || msg.role === 'response' ? 'background-color: var(--b3-theme-surface); color: var(--b3-theme-on-surface); border-bottom-left-radius: 4px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); border: 1px solid var(--b3-theme-border); user-select: text;' : 'background-color: var(--b3-theme-background); color: var(--b3-theme-on-background); border-bottom-left-radius: 4px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); border: 1px solid var(--b3-theme-border); user-select: text;'}" class="message-content"></div>
                                     ${msg.role === 'request' ? `
-                                        <div style="margin-top: 8px; display: flex; justify-content: flex-end; gap: 8px;">
+                                        <div style="margin-top: 6px; display: flex; justify-content: flex-end; gap: 6px;">
                                             <button class="b3-button b3-button--small b3-button--outline" data-edit-request="${index}" style="font-size: 12px;">
                                                 <svg class="b3-button__icon"><use xlink:href="#iconEdit"></use></svg>
                                                 <span>编辑</span>
@@ -1730,46 +1773,64 @@ ${trimmedCode}
                                             </button>
                                         </div>
                                     ` : msg.role === 'assistant' ? `
-                                        <div style="margin-top: 8px; display: flex; justify-content: flex-end;">
+                                        <div style="margin-top: 6px; display: flex; justify-content: flex-end;">
                                         </div>
                                     ` : ""}
                                 </div>
                             </div>
                         `).join("") : 
-                        '<div style="text-align: center; padding: 48px 24px; color: var(--b3-theme-on-surface-light);">' +
-                        '<div style="font-size: 32px; margin-bottom: 12px;">🤖</div>' +
-                        '<div style="font-size: 16px; margin-bottom: 8px;">开始与 AI 聊天吧</div>' +
+                        '<div style="text-align: center; padding: 32px 16px; color: var(--b3-theme-on-surface-light);">' +
+                        '<div style="font-size: 32px; margin-bottom: 8px;">🤖</div>' +
+                        '<div style="font-size: 16px; margin-bottom: 6px;">开始与 AI 聊天吧</div>' +
                         '<div style="font-size: 14px; line-height: 1.4;">你可以询问任何问题，获取帮助</div>' +
                         '</div>'
                     }
+                    ${this.dialogState.loading ? 
+                        '<div class="chat-message response" style="margin-bottom: 12px; display: flex;">' +
+                        '<div style="margin-right: 8px;">' +
+                        '<div style="width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 16px; background-color: var(--b3-theme-success); color: white;">📊</div>' +
+                        '</div>' +
+                        '<div style="flex: 1; max-width: 80%;">' +
+                        '<div style="display: flex; align-items: center; margin-bottom: 4px;">' +
+                        '<span style="font-size: 12px; font-weight: bold; color: var(--b3-theme-success);">请求</span>' +
+                        '</div>' +
+                        '<div style="padding: 12px; border-radius: 12px; background-color: var(--b3-theme-surface); color: var(--b3-theme-on-surface); border-bottom-left-radius: 4px; border: 1px solid var(--b3-theme-border);">' +
+                        '<div style="display: flex; align-items: center; justify-content: center; gap: 8px;">' +
+                        '<div class="b3-loading" style="margin: 0;"></div>' +
+                        '<span style="font-size: 14px; color: var(--b3-theme-on-surface-light);">接口请求中，请稍候... ${this.dialogState.loadingTime}s</span>' +
+                        '</div>' +
+                        '</div>' +
+                        '</div>' +
+                        '</div>' : ''
+                    }
                     ${this.dialogState.aiChatLoading ? 
-                        '<div class="chat-message assistant" style="margin-bottom: 16px; display: flex;">' +
-                        '<div style="margin-right: 12px;">' +
-                        '<div style="width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 16px; background-color: var(--b3-theme-surface-light); color: var(--b3-theme-on-surface);">🤖</div>' +
+                        '<div class="chat-message assistant" style="margin-bottom: 12px; display: flex;">' +
+                        '<div style="margin-right: 8px;">' +
+                        '<div style="width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 16px; background-color: #6366f1; color: white;">🤖</div>' +
                         '</div>' +
                         '<div style="flex: 1; max-width: 80%;">' +
                         '<div style="display: flex; align-items: center; margin-bottom: 4px;">' +
                         '<span style="font-size: 12px; font-weight: bold; color: var(--b3-theme-on-surface);">AI</span>' +
                         '</div>' +
-                        '<div style="padding: 16px; border-radius: 12px; background-color: var(--b3-theme-background); color: var(--b3-theme-on-background); border-bottom-left-radius: 4px; border: 1px solid var(--b3-theme-border);">' +
-                        '<div style="display: flex; align-items: center; justify-content: center; gap: 12px;">' +
+                        '<div style="padding: 12px; border-radius: 12px; background-color: var(--b3-theme-background); color: var(--b3-theme-on-background); border-bottom-left-radius: 4px; border: 1px solid var(--b3-theme-border);">' +
+                        '<div style="display: flex; align-items: center; justify-content: center; gap: 8px;">' +
                         '<div class="b3-loading" style="margin: 0;"></div>' +
                         '<span style="font-size: 14px; color: var(--b3-theme-on-surface-light);">AI 正在思考中，请稍候...</span>' +
                         '</div>' +
                         '</div>' +
                         '</div>' +
-                        '</div>' : ""
+                        '</div>' : ''
                     }
                     ${this.dialogState.aiChatError ? 
-                        '<div class="chat-message error" style="margin-bottom: 16px; display: flex;">' +
-                        '<div style="margin-right: 12px;">' +
+                        '<div class="chat-message error" style="margin-bottom: 12px; display: flex;">' +
+                        '<div style="margin-right: 8px;">' +
                         '<div style="width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 16px; background-color: var(--b3-theme-error-light); color: var(--b3-theme-error);">⚠️</div>' +
                         '</div>' +
                         '<div style="flex: 1; max-width: 80%;">' +
                         '<div style="display: flex; align-items: center; margin-bottom: 4px;">' +
                         '<span style="font-size: 12px; font-weight: bold; color: var(--b3-theme-error);">错误</span>' +
                         '</div>' +
-                        '<div style="padding: 12px; border-radius: 12px; background-color: var(--b3-theme-error-light); color: var(--b3-theme-error); border-bottom-left-radius: 4px; font-size: 14px; line-height: 1.4;">' +
+                        '<div style="padding: 10px; border-radius: 12px; background-color: var(--b3-theme-error-light); color: var(--b3-theme-error); border-bottom-left-radius: 4px; font-size: 14px; line-height: 1.4;">' +
                         this.dialogState.aiChatError +
                         '</div>' +
                         '</div>' +
@@ -1778,12 +1839,12 @@ ${trimmedCode}
                 </div>
                 
                 <!-- 输入区域 -->
-                <div style="padding: 16px; background-color: var(--b3-theme-surface); border-radius: 8px; box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.1);">
+                <div style="padding: 8px; padding-bottom: 24px; background-color: var(--b3-theme-surface); border-radius: 8px; box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.1);">
 
-                    <div style="display: flex; gap: 12px;">
+                    <div style="display: flex; gap: 8px;">
                         <textarea 
                             id="ai-chat-input" 
-                            style="flex: 1; padding: 12px; border: 1px solid var(--b3-theme-border); border-radius: 8px; resize: none; min-height: 48px; max-height: 150px; font-size: 14px; font-family: var(--b3-font-family); background-color: var(--b3-theme-background); color: var(--b3-theme-on-background);"
+                            style="flex: 1; padding: 10px; border: 1px solid var(--b3-theme-border); border-radius: 8px; resize: none; min-height: 40px; max-height: 120px; font-size: 14px; font-family: var(--b3-font-family); background-color: var(--b3-theme-background); color: var(--b3-theme-on-background);"
                             placeholder="输入消息..."
                             ${this.dialogState.aiChatLoading ? "disabled" : ""}
                         ></textarea>
@@ -1791,7 +1852,7 @@ ${trimmedCode}
                             class="b3-button b3-button--primary" 
                             id="send-ai-chat-btn" 
                             ${this.dialogState.aiChatLoading ? "disabled" : ""}
-                            style="padding: 0 20px; border-radius: 8px; font-size: 14px; font-weight: 500; min-width: 100px; display: flex; align-items: center; justify-content: center; gap: 4px;"
+                            style="padding: 0 16px; border-radius: 8px; font-size: 14px; font-weight: 500; min-width: 80px; display: flex; align-items: center; justify-content: center; gap: 4px;"
                             title="Ctrl+Enter 发送"
                         >
                             <svg class="b3-button__icon"><use xlink:href="#iconSend"></use></svg>
@@ -2009,10 +2070,40 @@ ${trimmedCode}
         };
         
         const renderTemplate = (template: string, context: any): string => {
+            // 处理表格渲染
+            const tableRegex = /\$\{table\(([^)]+)\s+as\s+([^}]+)\)\}\s*([\s\S]*?)\$\{end\}/g;
+            
+            let rendered = template.replace(tableRegex, (match, arrayPath, itemName, content) => {
+                const array = getValueByPath(context, arrayPath.trim());
+                if (!Array.isArray(array)) return match;
+                
+                if (array.length === 0) return "<p>没有数据</p>";
+                
+                // 生成表格HTML
+                let tableHtml = `<table style="width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px;">`;
+                
+                // 为每个数组项创建表格行
+                array.forEach((item: any) => {
+                    // 为每个数组项创建新的上下文
+                    const itemContext = {
+                        ...context,
+                        [itemName.trim()]: item
+                    };
+                    // 递归渲染表格单元格内容
+                    const cellContent = renderTemplate(content, itemContext);
+                    tableHtml += `<tr style="border-bottom: 1px solid var(--b3-theme-border);">`;
+                    tableHtml += `<td style="padding: 8px; vertical-align: top;">${cellContent}</td>`;
+                    tableHtml += `</tr>`;
+                });
+                
+                tableHtml += `</table>`;
+                return tableHtml;
+            });
+            
             // 处理数组循环
             const eachRegex = /\$\{each\(([^)]+)\s+as\s+([^}]+)\)\}\s*([\s\S]*?)\$\{end\}/g;
             
-            let rendered = template.replace(eachRegex, (match, arrayPath, itemName, content) => {
+            rendered = rendered.replace(eachRegex, (match, arrayPath, itemName, content) => {
                 const array = getValueByPath(context, arrayPath.trim());
                 if (!Array.isArray(array)) return match;
                 

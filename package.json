@@ -1,6 +1,6 @@
 {
   "name": "click2fill",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "通过选择文本并点击工具栏按钮，使用API响应自动填充文本",
   "main": "src/index.js",
   "scripts": {
